@@ -98,6 +98,7 @@ class ToolRegistry(
             "list_ssh_profiles" -> done(profiles.all().joinToString("\n") { "${it.id}: ${it.name} — ${it.username}@${it.host}:${it.port}" }.ifBlank { "SSH-профили не настроены" })
             "ssh_exec" -> dangerous(confirmed, "SSH ${args.string("profile")}: ${args.string("command")}") {
                 val profile = profiles.find(args.string("profile")) ?: error("SSH-профиль не найден")
+                require(profile.fingerprint.isNotBlank()) { "Сначала откройте раздел «Серверы» и нажмите «Проверить», чтобы доверить fingerprint хоста" }
                 val result = ssh.execute(profile, args.string("command"))
                 "exit=${result.exitCode}\nfingerprint=${result.fingerprint}\n${result.output}"
             }
