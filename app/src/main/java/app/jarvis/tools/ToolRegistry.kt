@@ -2,6 +2,7 @@ package app.jarvis.tools
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -62,7 +63,7 @@ class ToolRegistry(
     fun schemas(): JSONArray = JSONArray().apply {
         put(schema("get_current_time", "Текущие локальные дата, время и часовой пояс"))
         put(schema("device_status", "Состояние устройства, сети, батареи и хранилища"))
-        put(schema("web_search", "Найти актуальную информацию в интернете. Возвращает заголовки, ссылки и фрагменты.", props("query" to "string", "limit" to "integer"), listOf("query")))
+        put(schema("web_search", "Найти актуальную информацию в интернете. Для новостей передай kind=news. Возвращает источники и даты.", props("query" to "string", "limit" to "integer", "kind" to "string"), listOf("query")))
         put(schema("web_fetch", "Прочитать содержимое публичной HTTPS-страницы по URL", props("url" to "string"), listOf("url")))
         put(schema("list_ssh_profiles", "Список доступных SSH-профилей без секретов"))
         put(schema("ssh_exec", "Выполнить команду на сервере из SSH-профиля. Всегда требует подтверждения пользователя.", props("profile" to "string", "command" to "string"), listOf("profile", "command")))
@@ -93,7 +94,12 @@ class ToolRegistry(
         when (name) {
             "get_current_time" -> done(ZonedDateTime.now().toString())
             "device_status" -> done(deviceStatus())
-            "web_search" -> done(web.search(args.string("query"), args.optInt("limit", 5)).joinToString("\n\n") { "${it.title}\n${it.url}\n${it.snippet}" }.ifBlank { "Ничего не найдено" })
+            "web_search" -> {
+                val outcome = web.search(args.string("query"), args.optInt("limit", 5), args.optString("kind", "auto"))
+                done(JSONObject().put("ok", outcome.results.isNotEmpty()).put("provider", outcome.provider).put("cached", outcome.cached).put("results", JSONArray().apply {
+                    outcome.results.forEach { result -> put(JSONObject().put("title", result.title).put("url", result.url).put("snippet", result.snippet).put("source", result.source).put("publishedAt", result.publishedAt)) }
+                }).put("diagnostics", JSONArray(outcome.diagnostics)).toString())
+            }
             "web_fetch" -> done(web.fetch(args.string("url")))
             "list_ssh_profiles" -> done(profiles.all().joinToString("\n") { "${it.id}: ${it.name} — ${it.username}@${it.host}:${it.port}" }.ifBlank { "SSH-профили не настроены" })
             "ssh_exec" -> dangerous(confirmed, "SSH ${args.string("profile")}: ${args.string("command")}") {
@@ -135,7 +141,16 @@ class ToolRegistry(
 
     private fun done(content: String) = ToolResult(content.take(64_000))
     private fun dangerous(confirmed: Boolean, prompt: String, action: () -> String) = if (!confirmed) ToolResult("", true, prompt) else done(action())
-    private fun confirmIntent(confirmed: Boolean, prompt: String, intent: Intent) = dangerous(confirmed, prompt) { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Действие открыто на устройстве" }
+    private fun confirmIntent(confirmed: Boolean, prompt: String, intent: Intent) = dangerous(confirmed, prompt) {
+        try {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "Действие открыто на устройстве"
+        } catch (_: ActivityNotFoundException) {
+            error("На устройстве нет приложения, которое может выполнить это действие")
+        } catch (error: SecurityException) {
+            error("Android отклонил действие: ${error.message ?: "нет разрешения"}")
+        }
+    }
     private fun publicUri(raw: String): Uri { val uri = Uri.parse(raw); require(uri.scheme == "https" && !uri.host.isNullOrBlank()) { "Разрешены только HTTPS-ссылки" }; return uri }
 
     private fun deviceStatus(): String {

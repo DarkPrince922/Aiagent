@@ -51,13 +51,23 @@ import app.jarvis.data.ProviderSettings
             )
         }
         item {
+            ListItem(
+                headlineContent = { Text("Без лимита шагов") },
+                supportingContent = { Text("Агент работает до результата или нажатия «Стоп»; повторяющиеся циклы блокируются") },
+                leadingContent = { Icon(Icons.Default.AllInclusive, null) },
+                trailingContent = { Switch(value.unlimitedAgent, { value = value.copy(unlimitedAgent = it) }) }
+            )
+        }
+        if (!value.unlimitedAgent) item {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.AccountTree, null); Spacer(Modifier.width(12.dp)); Text("Максимум шагов: ${value.agentSteps}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall) }
-                Slider(value.agentSteps.toFloat(), { value = value.copy(agentSteps = it.toInt()) }, valueRange = 1f..10f, steps = 8)
+                Slider(value.agentSteps.toFloat(), { value = value.copy(agentSteps = it.toInt()) }, valueRange = 1f..20f, steps = 18)
             }
         }
         item { SettingsField { OutlinedTextField(value.systemPrompt, { value = value.copy(systemPrompt = it) }, Modifier.fillMaxWidth(), label = { Text("Системная инструкция") }, leadingIcon = { Icon(Icons.Default.Psychology, null) }, minLines = 5, maxLines = 12) } }
         item { SectionTitle("Безопасность", Icons.Default.Security) }
+        item { ListItem(headlineContent = { Text("Будильники и таймеры") }, supportingContent = { Text("Разрешение SET_ALARM выдаётся Android при установке") }, leadingContent = { Icon(Icons.Default.AlarmOn, null, tint = MaterialTheme.colorScheme.primary) }, trailingContent = { Icon(Icons.Default.CheckCircle, "Разрешено", tint = MaterialTheme.colorScheme.primary) }) }
+        item { ListItem(headlineContent = { Text("Календарь, карты, звонки и почта") }, supportingContent = { Text("Открываются в системных приложениях с вашим подтверждением") }, leadingContent = { Icon(Icons.Default.Apps, null, tint = MaterialTheme.colorScheme.primary) }) }
         item { ListItem(headlineContent = { Text("Подтверждение действий") }, supportingContent = { Text("SSH, HTTP-запросы, буфер, звонки, письма и изменения данных всегда требуют вашего нажатия") }, leadingContent = { Icon(Icons.Default.AdminPanelSettings, null, tint = MaterialTheme.colorScheme.primary) }) }
         item { ListItem(headlineContent = { Text("Закрепление SSH-хоста") }, supportingContent = { Text("После первой успешной проверки Jarvis запоминает fingerprint и отклоняет подмену сервера") }, leadingContent = { Icon(Icons.Default.VerifiedUser, null, tint = MaterialTheme.colorScheme.primary) }) }
         item { SectionTitle("О приложении", Icons.Default.Info) }

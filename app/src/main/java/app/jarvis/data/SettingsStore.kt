@@ -11,6 +11,7 @@ class SettingsStore(context: Context) {
         apiKey = secrets.get("provider_api_key").ifBlank { prefs.getString("api_key", "") ?: "" },
         systemPrompt = prefs.getString("system", null) ?: ProviderSettings().systemPrompt,
         agentSteps = prefs.getInt("agent_steps", ProviderSettings().agentSteps),
+        unlimitedAgent = prefs.getBoolean("unlimited_agent", false),
         toolsEnabled = prefs.getBoolean("tools_enabled", true)
     )
     fun save(value: ProviderSettings) {
@@ -20,7 +21,8 @@ class SettingsStore(context: Context) {
         .putString("model", value.model.trim())
         .remove("api_key")
         .putString("system", value.systemPrompt)
-        .putInt("agent_steps", value.agentSteps.coerceIn(1, 10))
+        .putInt("agent_steps", value.agentSteps.coerceIn(1, 20))
+        .putBoolean("unlimited_agent", value.unlimitedAgent)
         .putBoolean("tools_enabled", value.toolsEnabled)
         .apply()
     }

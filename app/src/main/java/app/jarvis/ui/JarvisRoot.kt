@@ -44,7 +44,7 @@ private enum class Destination(val label: String) { CHAT("Чат"), TOOLS("Ин�
         Box(Modifier.padding(padding)) {
             when (destination) {
                 Destination.CHAT -> ChatScreen(vm, openSettings = { destination = Destination.SETTINGS }, openTools = { destination = Destination.TOOLS })
-                Destination.TOOLS -> ToolsScreen(vm.tools) { prompt -> destination = Destination.CHAT; vm.send(prompt) }
+                Destination.TOOLS -> ToolsScreen(vm.tools) { prompt -> vm.prefill(prompt); destination = Destination.CHAT }
                 Destination.SERVERS -> ServersScreen(container.sshProfiles, container.ssh)
                 Destination.SETTINGS -> SettingsScreen(vm, container.settings.get())
             }

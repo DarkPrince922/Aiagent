@@ -31,14 +31,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.jarvis.data.DeliveryState
 import app.jarvis.data.Message
+import app.jarvis.data.Conversation
+import java.text.DateFormat
+import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable fun ChatScreen(vm: ChatViewModel, openSettings: () -> Unit, openTools: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
-    var draft by remember { mutableStateOf("") }
+    var historyOpen by remember { mutableStateOf(false) }
+    var deleteCandidate by remember { mutableStateOf<Conversation?>(null) }
     val listState = rememberLazyListState()
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) draft = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
+        if (result.resultCode == Activity.RESULT_OK) vm.updateDraft(result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty())
     }
     LaunchedEffect(state.messages.size, state.pending) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex + if (state.pending != null) 1 else 0)
@@ -49,14 +54,15 @@ import java.util.Locale
                 Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(42.dp)) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary) } }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Jarvis", style = MaterialTheme.typography.titleLarge)
+                    Text(state.activeTitle, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(statusIcon(state.apiStatus), null, Modifier.size(14.dp), tint = statusColor(state.apiStatus))
                         Spacer(Modifier.width(5.dp))
                         Text(state.statusText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                IconButton(onClick = vm::clearChat) { Icon(Icons.Default.EditNote, "Новый чат") }
+                IconButton(onClick = { historyOpen = true }) { Icon(Icons.Default.History, "История чатов") }
+                IconButton(onClick = vm::newConversation, enabled = !state.sending && state.pending == null) { Icon(Icons.Default.EditNote, "Новый чат") }
                 IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Настройки") }
             }
         }
@@ -69,22 +75,66 @@ import java.util.Locale
                 }
             }
         }
-        if (state.messages.isEmpty()) EmptyChat(Modifier.weight(1f), onPrompt = { prompt -> draft = prompt }, openTools = openTools)
+        if (state.loading) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        else if (state.messages.isEmpty()) EmptyChat(Modifier.weight(1f), onPrompt = vm::prefill, openTools = openTools)
         else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(state.messages, key = { it.id }) { message -> MessageBubble(message, retry = { vm.retry(message) }) }
             state.pending?.let { action -> item(key = "confirmation") { ConfirmationPanel(action.label, approve = { vm.resolvePending(true) }, reject = { vm.resolvePending(false) }) } }
             if (state.sending) item(key = "thinking") { ThinkingRow() }
         }
         ChatComposer(
-            draft = draft,
+            draft = state.draft,
             enabled = !state.sending && state.pending == null,
-            onDraft = { draft = it },
-            onSend = { if (vm.send(draft)) draft = "" },
+            sending = state.sending,
+            onDraft = vm::updateDraft,
+            onSend = { vm.send() },
+            onStop = vm::stop,
             onVoice = {
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag()).putExtra(RecognizerIntent.EXTRA_PROMPT, "Говорите")
-                runCatching { speech.launch(intent) }
+                runCatching { speech.launch(intent) }.onFailure { vm.showBanner("На устройстве не найден сервис голосового ввода") }
             }
         )
+    }
+    if (historyOpen) ChatHistorySheet(
+        conversations = state.conversations,
+        activeId = state.activeConversationId,
+        enabled = !state.sending && state.pending == null,
+        select = { vm.selectConversation(it); historyOpen = false },
+        create = { vm.newConversation(); historyOpen = false },
+        delete = { deleteCandidate = it },
+        close = { historyOpen = false }
+    )
+    deleteCandidate?.let { conversation ->
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            icon = { Icon(Icons.Default.DeleteOutline, null) },
+            title = { Text("Удалить чат?") },
+            text = { Text("«${conversation.title}» и вся его история будут удалены.") },
+            dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("Отмена") } },
+            confirmButton = { Button(onClick = { vm.deleteConversation(conversation.id); deleteCandidate = null }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Удалить") } }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun ChatHistorySheet(conversations: List<Conversation>, activeId: String?, enabled: Boolean, select: (String) -> Unit, create: () -> Unit, delete: (Conversation) -> Unit, close: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = close) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("История чатов", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            FilledIconButton(onClick = create, enabled = enabled, shape = RoundedCornerShape(8.dp)) { Icon(Icons.Default.Add, "Новый чат") }
+        }
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(conversations, key = { it.id }) { conversation ->
+                Surface(onClick = { if (enabled) select(conversation.id) }, shape = RoundedCornerShape(8.dp), color = if (conversation.id == activeId) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 9.dp, bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (conversation.id == activeId) Icons.Default.ChatBubble else Icons.Default.ChatBubbleOutline, null)
+                        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(conversation.title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(conversation.updatedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        IconButton(onClick = { if (enabled) delete(conversation) }, enabled = enabled) { Icon(Icons.Default.DeleteOutline, "Удалить чат") }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.navigationBarsPadding())
     }
 }
 
@@ -140,12 +190,13 @@ import java.util.Locale
 
 @Composable private fun ThinkingRow() { Row(Modifier.padding(start = 42.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(9.dp)); Text("Jarvis работает", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
 
-@Composable private fun ChatComposer(draft: String, enabled: Boolean, onDraft: (String) -> Unit, onSend: () -> Unit, onVoice: () -> Unit) {
+@Composable private fun ChatComposer(draft: String, enabled: Boolean, sending: Boolean, onDraft: (String) -> Unit, onSend: () -> Unit, onStop: () -> Unit, onVoice: () -> Unit) {
     Surface(tonalElevation = 3.dp) {
         Row(Modifier.fillMaxWidth().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
             IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Default.Mic, "Голосовой ввод") }
             OutlinedTextField(draft, onDraft, Modifier.weight(1f), placeholder = { Text("Поручить задачу") }, maxLines = 5, enabled = enabled, shape = RoundedCornerShape(8.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onSend() }))
-            Spacer(Modifier.width(8.dp)); FilledIconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.size(52.dp), shape = RoundedCornerShape(8.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Отправить") }
+            Spacer(Modifier.width(8.dp)); if (sending) FilledIconButton(onClick = onStop, modifier = Modifier.size(52.dp), shape = RoundedCornerShape(8.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Default.Stop, "Остановить") }
+            else FilledIconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.size(52.dp), shape = RoundedCornerShape(8.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Отправить") }
         }
     }
 }
