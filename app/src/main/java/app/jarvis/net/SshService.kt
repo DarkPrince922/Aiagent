@@ -27,7 +27,7 @@ class SshService(private val profiles: SshProfileStore) {
         }
         if (profile.fingerprint.isNotBlank()) jsch.hostKeyRepository = FingerprintRepository(jsch, profile.fingerprint)
         val session = jsch.getSession(profile.username, profile.host, profile.port).apply {
-            if (profile.password.isNotBlank()) setPassword(profile.password)
+            if (profile.password.isNotBlank()) setPassword(profile.password.toByteArray())
             setConfig("StrictHostKeyChecking", if (profile.fingerprint.isBlank()) "no" else "yes")
             setConfig("PreferredAuthentications", if (profile.privateKey.isNotBlank()) "publickey,password,keyboard-interactive" else "password,keyboard-interactive")
             timeout = 20_000

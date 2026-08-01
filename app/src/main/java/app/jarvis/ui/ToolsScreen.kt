@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -79,7 +80,7 @@ private fun toolPrompt(tool: ToolInfo): String = when (tool.name) {
 private fun toolIcon(name: String): ImageVector = when (name) {
     "travel_explore" -> Icons.Default.TravelExplore; "language" -> Icons.Default.Language; "terminal" -> Icons.Default.Terminal
     "http" -> Icons.Default.Http; "dns" -> Icons.Default.Dns; "data_object" -> Icons.Default.DataObject; "calculate" -> Icons.Default.Calculate
-    "edit_note" -> Icons.Default.EditNote; "notes" -> Icons.Default.Notes; "alarm" -> Icons.Default.Alarm; "timer" -> Icons.Default.Timer
+    "edit_note" -> Icons.Default.EditNote; "notes" -> Icons.AutoMirrored.Filled.Notes; "alarm" -> Icons.Default.Alarm; "timer" -> Icons.Default.Timer
     "calendar_month" -> Icons.Default.CalendarMonth; "map" -> Icons.Default.Map; "phone" -> Icons.Default.Phone; "mail" -> Icons.Default.Mail
     "share" -> Icons.Default.Share; "content_paste" -> Icons.Default.ContentPaste; "content_copy" -> Icons.Default.ContentCopy
     "phone_android" -> Icons.Default.PhoneAndroid; else -> Icons.Default.Extension

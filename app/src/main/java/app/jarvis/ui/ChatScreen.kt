@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -144,7 +145,7 @@ import java.util.Locale
         Row(Modifier.fillMaxWidth().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
             IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Default.Mic, "Голосовой ввод") }
             OutlinedTextField(draft, onDraft, Modifier.weight(1f), placeholder = { Text("Поручить задачу") }, maxLines = 5, enabled = enabled, shape = RoundedCornerShape(8.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onSend() }))
-            Spacer(Modifier.width(8.dp)); FilledIconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.size(52.dp), shape = RoundedCornerShape(8.dp)) { Icon(Icons.Default.Send, "Отправить") }
+            Spacer(Modifier.width(8.dp)); FilledIconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.size(52.dp), shape = RoundedCornerShape(8.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Отправить") }
         }
     }
 }

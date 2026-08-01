@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -80,7 +81,7 @@ import kotlinx.coroutines.withContext
             Column {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Terminal, null); Spacer(Modifier.width(10.dp)); Text(if (initial.host.isBlank()) "Новый SSH-профиль" else "SSH-профиль", style = MaterialTheme.typography.titleLarge); Spacer(Modifier.weight(1f)); IconButton(onClick = close) { Icon(Icons.Default.Close, "Закрыть") } }
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    item { OutlinedTextField(value.name, { value = value.copy(name = it) }, Modifier.fillMaxWidth(), label = { Text("Название") }, leadingIcon = { Icon(Icons.Default.Label, null) }, singleLine = true) }
+                    item { OutlinedTextField(value.name, { value = value.copy(name = it) }, Modifier.fillMaxWidth(), label = { Text("Название") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.Label, null) }, singleLine = true) }
                     item { OutlinedTextField(value.host, { value = value.copy(host = it.trim()) }, Modifier.fillMaxWidth(), label = { Text("Host") }, leadingIcon = { Icon(Icons.Default.Dns, null) }, singleLine = true) }
                     item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { OutlinedTextField(value.username, { value = value.copy(username = it) }, Modifier.weight(1f), label = { Text("Пользователь") }, singleLine = true); OutlinedTextField(port, { port = it.filter(Char::isDigit).take(5) }, Modifier.width(110.dp), label = { Text("Порт") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true) } }
                     item { OutlinedTextField(value.password, { value = value.copy(password = it) }, Modifier.fillMaxWidth(), label = { Text("Пароль (необязательно)") }, leadingIcon = { Icon(Icons.Default.Password, null) }, visualTransformation = PasswordVisualTransformation(), singleLine = true) }
