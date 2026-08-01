@@ -15,6 +15,17 @@ android {
         versionCode = 3
         versionName = "0.3.0"
     }
+    signingConfigs {
+        create("jarvisDebug") {
+            storeFile = file("jarvis-debug.keystore")
+            storePassword = "android"
+            keyAlias = "jarvisdebug"
+            keyPassword = "android"
+        }
+    }
+    buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("jarvisDebug") }
+    }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
