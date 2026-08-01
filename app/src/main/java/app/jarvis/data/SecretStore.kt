@@ -16,13 +16,15 @@ class SecretStore(context: Context) {
 
     fun put(key: String, value: String) {
         if (value.isEmpty()) {
-            prefs.edit().remove(key).apply()
+            check(prefs.edit().remove(key).commit()) { "Не удалось обновить защищённое хранилище" }
             return
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         val packed = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        prefs.edit().putString(key, Base64.encodeToString(packed, Base64.NO_WRAP)).apply()
+        check(prefs.edit().putString(key, Base64.encodeToString(packed, Base64.NO_WRAP)).commit()) {
+            "Не удалось сохранить защищённые данные"
+        }
     }
 
     fun get(key: String): String = runCatching {
@@ -34,7 +36,9 @@ class SecretStore(context: Context) {
         cipher.doFinal(cipherText).toString(Charsets.UTF_8)
     }.getOrDefault("")
 
-    fun remove(key: String) = prefs.edit().remove(key).apply()
+    fun remove(key: String) {
+        check(prefs.edit().remove(key).commit()) { "Не удалось обновить защищённое хранилище" }
+    }
 
     private fun getOrCreateKey(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

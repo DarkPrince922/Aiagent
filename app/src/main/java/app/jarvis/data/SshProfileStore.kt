@@ -17,6 +17,32 @@ data class SshProfile(
     val fingerprint: String = ""
 )
 
+data class SshProfileSummary(
+    val id: String,
+    val name: String,
+    val host: String,
+    val port: Int,
+    val username: String,
+    val hostKeyTrusted: Boolean
+) {
+    fun agentContext(): String = "$id: $name - $username@$host:$port; host_key_trusted=$hostKeyTrusted"
+}
+
+fun SshProfile.publicSummary() = SshProfileSummary(
+    id = id,
+    name = name,
+    host = host,
+    port = port,
+    username = username,
+    hostKeyTrusted = fingerprint.isNotBlank()
+)
+
+internal fun SshProfile.resetTrustIfEndpointChanged(previous: SshProfile?): SshProfile {
+    if (previous == null) return this
+    val sameHost = previous.host.equals(host, ignoreCase = true)
+    return if (sameHost && previous.port == port) this else copy(fingerprint = "")
+}
+
 class SshProfileStore(context: Context) {
     private val prefs = context.getSharedPreferences("ssh_profiles", Context.MODE_PRIVATE)
     private val secrets = SecretStore(context)
@@ -45,11 +71,14 @@ class SshProfileStore(context: Context) {
     @Synchronized fun save(profile: SshProfile) {
         require(profile.host.isNotBlank()) { "Укажите адрес сервера" }
         require(profile.port in 1..65535) { "Некорректный SSH-порт" }
-        val profiles = all().filterNot { it.id == profile.id } + profile
-        write(profiles)
+        val current = all()
+        val previous = current.firstOrNull { it.id == profile.id }
+        val stored = profile.resetTrustIfEndpointChanged(previous)
+        val profiles = current.filterNot { it.id == profile.id } + stored
         secrets.put("ssh_${profile.id}_password", profile.password)
         secrets.put("ssh_${profile.id}_key", profile.privateKey)
         secrets.put("ssh_${profile.id}_passphrase", profile.passphrase)
+        write(profiles)
     }
 
     @Synchronized fun trust(id: String, fingerprint: String) {
@@ -65,6 +94,6 @@ class SshProfileStore(context: Context) {
         val array = JSONArray().apply { profiles.forEach { profile ->
             put(JSONObject().put("id", profile.id).put("name", profile.name).put("host", profile.host).put("port", profile.port).put("username", profile.username).put("fingerprint", profile.fingerprint))
         } }
-        prefs.edit().putString("profiles", array.toString()).apply()
+        check(prefs.edit().putString("profiles", array.toString()).commit()) { "Не удалось сохранить SSH-профили" }
     }
 }

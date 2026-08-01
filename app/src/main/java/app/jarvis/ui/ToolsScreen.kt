@@ -1,5 +1,6 @@
 package app.jarvis.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -27,11 +28,16 @@ import app.jarvis.tools.ToolRisk
     val categories = remember(tools) { listOf("Все") + tools.map { it.category }.distinct() }
     val filtered = tools.filter { (category == "Все" || it.category == category) && (query.isBlank() || it.title.contains(query, true) || it.description.contains(query, true)) }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { Text("Инструменты", style = MaterialTheme.typography.titleLarge); Text("${tools.size} возможностей агента", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Icon(Icons.Default.Extension, null, tint = MaterialTheme.colorScheme.primary)
+        Surface(color = MaterialTheme.colorScheme.surface) {
+            Column {
+                Row(Modifier.fillMaxWidth().heightIn(min = 58.dp).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text("Инструменты", style = MaterialTheme.typography.titleMedium); Text("CATALOG / ${tools.size}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Icon(Icons.Default.Extension, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
         }
-        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp), leadingIcon = { Icon(Icons.Default.Search, null) }, trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Очистить") } }, placeholder = { Text("Поиск инструмента") }, singleLine = true, shape = RoundedCornerShape(8.dp))
+        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp), leadingIcon = { Icon(Icons.Default.Search, null) }, trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Очистить") } }, placeholder = { Text("Поиск инструмента") }, singleLine = true, shape = RoundedCornerShape(8.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedContainerColor = MaterialTheme.colorScheme.surface))
         LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(categories) { item -> FilterChip(selected = category == item, onClick = { category = item }, label = { Text(item) }) }
         }
@@ -42,15 +48,16 @@ import app.jarvis.tools.ToolRisk
 }
 
 @Composable private fun ToolCard(tool: ToolInfo, onClick: () -> Unit) {
-    Card(onClick = onClick, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 154.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Card(onClick = onClick, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 166.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.fillMaxSize().padding(14.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(38.dp)) { Box(contentAlignment = Alignment.Center) { Icon(toolIcon(tool.icon), null, Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer) } }
+                Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)), modifier = Modifier.size(38.dp)) { Box(contentAlignment = Alignment.Center) { Icon(toolIcon(tool.icon), null, Modifier.size(21.dp), tint = MaterialTheme.colorScheme.secondary) } }
                 Spacer(Modifier.weight(1f))
                 Icon(when (tool.risk) { ToolRisk.READ_ONLY -> Icons.Default.CheckCircle; ToolRisk.CHANGES_DEVICE -> Icons.Default.TouchApp; ToolRisk.REMOTE_COMMAND -> Icons.Default.AdminPanelSettings }, null, Modifier.size(18.dp), tint = when (tool.risk) { ToolRisk.READ_ONLY -> MaterialTheme.colorScheme.primary; ToolRisk.CHANGES_DEVICE -> MaterialTheme.colorScheme.tertiary; ToolRisk.REMOTE_COMMAND -> MaterialTheme.colorScheme.error })
             }
             Spacer(Modifier.height(12.dp)); Text(tool.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(4.dp)); Text(tool.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp)); Text(tool.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(5.dp)); Text(tool.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

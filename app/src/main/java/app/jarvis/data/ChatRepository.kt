@@ -53,8 +53,8 @@ class ChatRepository(
         val settings = if (allowUnlimited) saved else saved.copy(unlimitedAgent = false, agentSteps = 10)
         require(settings.apiKey.isNotBlank()) { "Добавьте API-ключ в настройках" }
         val messages = buildList {
-            add(ApiMessage("system", "${settings.systemPrompt}\nТекущие локальные дата и время: ${ZonedDateTime.now()}"))
-            history.filter { (it.role == "user" || it.role == "assistant") && it.state != DeliveryState.QUEUED && it.state != DeliveryState.FAILED }.forEach { add(ApiMessage(it.role, it.text)) }
+            add(ApiMessage("system", "${settings.systemPrompt}\nТекущие локальные дата и время: ${ZonedDateTime.now()}\nСохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}"))
+            history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
         runAgent(settings, messages, shouldContinue)
     }
@@ -101,7 +101,10 @@ class ChatRepository(
     fun retryPending(): Boolean {
         for (item in pendingStore.waiting()) {
             try {
-                val reply = send(listOf(Message(role = "user", text = item.text)), allowUnlimited = false).getOrThrow()
+                val restoredHistory = conversationStore.messages(item.conversationId).map { message ->
+                    if (message.detail == "queue:${item.id}") message.copy(state = DeliveryState.SENT, detail = null) else message
+                }.ifEmpty { listOf(Message(role = "user", text = item.text)) }
+                val reply = send(restoredHistory, allowUnlimited = false).getOrThrow()
                 pendingStore.complete(item.id, reply.text + if (reply.pending != null) "\nОткройте Jarvis и повторите команду для подтверждения действия." else "")
             } catch (error: ChatFailure.Transport) {
                 return true

@@ -121,7 +121,15 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
         continueFlag.set(false)
         agentJob?.cancel()
         agentJob = null
-        mutable.value = mutable.value.copy(sending = false, banner = "Выполнение остановлено")
+        val conversationId = mutable.value.activeConversationId
+        val inFlight = mutable.value.messages.lastOrNull { it.state == DeliveryState.SENDING }
+        val cancelled = inFlight?.copy(state = DeliveryState.CANCELLED, detail = "Остановлено пользователем")
+        if (conversationId != null && cancelled != null) viewModelScope.launch(Dispatchers.IO) { repository.saveMessage(conversationId, cancelled) }
+        mutable.value = mutable.value.copy(
+            messages = cancelled?.let { stopped -> mutable.value.messages.map { if (it.id == stopped.id) stopped else it } } ?: mutable.value.messages,
+            sending = false,
+            banner = "Выполнение остановлено"
+        )
     }
 
     fun retry(message: Message) {
@@ -189,7 +197,8 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     }
 
     private suspend fun handleFailure(conversationId: String, user: Message, error: Throwable) {
-        val failed = if (error is ChatFailure.Transport) {
+        val recoverable = error is ChatFailure.Transport || (error is ChatFailure.Http && error.retryable)
+        val failed = if (recoverable) {
             val queueId = withContext(Dispatchers.IO) { repository.queue(conversationId, user.text) }
             user.copy(state = DeliveryState.QUEUED, detail = "queue:$queueId")
         } else user.copy(state = DeliveryState.FAILED, detail = error.message)
@@ -199,9 +208,9 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                 conversations = chats,
                 messages = mutable.value.messages.map { if (it.id == user.id) failed else it },
                 sending = false,
-                apiStatus = if (error is ChatFailure.Transport) ApiStatus.OFFLINE else ApiStatus.ERROR,
-                statusText = if (error is ChatFailure.Transport) "Нет связи с API" else shortError(error),
-                banner = if (error is ChatFailure.Transport) "${error.message}. Запрос сохранён и повторится автоматически." else error.message ?: "Неизвестная ошибка"
+                apiStatus = if (recoverable) ApiStatus.OFFLINE else ApiStatus.ERROR,
+                statusText = if (recoverable) "Ожидаю связь с API" else shortError(error),
+                banner = if (recoverable) "${error.message}. Запрос и контекст сохранены; повтор запустится автоматически." else error.message ?: "Неизвестная ошибка"
             )
         }
     }

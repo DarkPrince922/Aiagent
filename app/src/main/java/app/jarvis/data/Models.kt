@@ -11,7 +11,7 @@ data class Message(
     val state: DeliveryState = DeliveryState.SENT,
     val detail: String? = null
 )
-enum class DeliveryState { SENDING, QUEUED, SENT, FAILED }
+enum class DeliveryState { SENDING, QUEUED, SENT, FAILED, CANCELLED }
 data class ProviderSettings(
     val endpoint: String = "https://aiprovider.duckdns.org/v1",
     val model: String = "claude-opus-4-8",

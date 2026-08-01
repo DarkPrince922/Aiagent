@@ -10,6 +10,10 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
+import java.util.UUID
+import java.util.concurrent.CancellationException
+import kotlin.math.min
+import kotlin.random.Random
 import javax.net.ssl.SSLException
 
 data class ApiToolCall(val id: String, val name: String, val arguments: JSONObject) {
@@ -35,7 +39,7 @@ data class ApiAnswer(val text: String, val toolCalls: List<ApiToolCall>, val raw
 
 sealed class ChatFailure(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class Transport(message: String, cause: Throwable? = null) : ChatFailure(message, cause)
-    class Http(val status: Int, val serverMessage: String, val retryable: Boolean) :
+    class Http(val status: Int, val serverMessage: String, val retryable: Boolean, val retryAfterMillis: Long? = null) :
         ChatFailure("API $status: $serverMessage")
     class Protocol(message: String, cause: Throwable? = null) : ChatFailure(message, cause)
 }
@@ -86,6 +90,22 @@ class ChatApi {
     }
 
     private fun request(settings: ProviderSettings, path: String, method: String, body: JSONObject?): String {
+        val requestId = UUID.randomUUID().toString()
+        var attempt = 0
+        while (true) {
+            try {
+                return requestOnce(settings, path, method, body, requestId)
+            } catch (error: ChatFailure.Http) {
+                if (!error.retryable || attempt >= MAX_RETRIES) throw error
+                sleepBeforeRetry(attempt++, error.retryAfterMillis)
+            } catch (error: ChatFailure.Transport) {
+                if (attempt >= MAX_RETRIES) throw error
+                sleepBeforeRetry(attempt++, null)
+            }
+        }
+    }
+
+    private fun requestOnce(settings: ProviderSettings, path: String, method: String, body: JSONObject?, requestId: String): String {
         val endpoint = settings.endpoint.trim().trimEnd('/')
         if (!endpoint.startsWith("https://")) throw ChatFailure.Protocol("Endpoint должен начинаться с https://")
         val connection = try {
@@ -99,7 +119,9 @@ class ChatApi {
             connection.readTimeout = 120_000
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("User-Agent", "Jarvis-Android/0.2")
+            connection.setRequestProperty("User-Agent", "Jarvis-Android/0.4")
+            connection.setRequestProperty("X-Request-ID", requestId)
+            connection.setRequestProperty("Idempotency-Key", requestId)
             if (settings.apiKey.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer ${settings.apiKey}")
             if (body != null) {
                 connection.doOutput = true
@@ -110,7 +132,8 @@ class ChatApi {
             val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val message = parseError(raw)
-                throw ChatFailure.Http(status, message, status == 408 || status == 429 || status >= 500)
+                val retryAfter = connection.getHeaderField("Retry-After")?.trim()?.toLongOrNull()?.times(1_000)
+                throw ChatFailure.Http(status, message, isRetryableHttpStatus(status), retryAfter)
             }
             if (raw.isBlank()) throw ChatFailure.Protocol("API вернул пустой ответ")
             return raw
@@ -128,6 +151,17 @@ class ChatApi {
             throw ChatFailure.Transport("Сетевая ошибка: ${error.message}", error)
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun sleepBeforeRetry(attempt: Int, retryAfterMillis: Long?) {
+        val exponential = min(8_000L, 500L shl attempt.coerceIn(0, 4))
+        val delay = retryAfterMillis?.coerceIn(250L, 30_000L) ?: (exponential + Random.nextLong(150L, 650L))
+        try {
+            Thread.sleep(delay)
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw CancellationException("Операция остановлена").apply { initCause(error) }
         }
     }
 
@@ -150,4 +184,9 @@ class ChatApi {
             else -> raw.take(500)
         }
     }.getOrDefault(raw.take(500)).ifBlank { "Сервер не объяснил ошибку" }
+
+    companion object {
+        const val MAX_RETRIES = 4
+        fun isRetryableHttpStatus(status: Int): Boolean = status == 408 || status == 409 || status == 425 || status == 429 || status >= 500
+    }
 }

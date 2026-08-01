@@ -8,7 +8,7 @@ class JarvisApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.autonomous.resumeActive()
     }
     override val workManagerConfiguration = Configuration.Builder().setMinimumLoggingLevel(android.util.Log.INFO).build()
 }
-

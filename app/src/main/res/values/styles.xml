@@ -1,8 +1,11 @@
 <resources>
-    <style name="Theme.Jarvis" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.Jarvis" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F7F8FA</item>
+        <item name="android:windowBackground">#080B0D</item>
+        <item name="android:colorAccent">#70F0B2</item>
+        <item name="android:statusBarColor">#080B0D</item>
+        <item name="android:navigationBarColor">#080B0D</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>
-

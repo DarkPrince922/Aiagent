@@ -18,18 +18,37 @@ import app.jarvis.data.NoteStore
 import app.jarvis.data.SshProfileStore
 import app.jarvis.net.SshService
 import app.jarvis.net.WebService
+import app.jarvis.net.isRetryableSshConnectFailure
+import com.jcraft.jsch.JSchException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetAddress
+import java.io.IOException
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.ZonedDateTime
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.CancellationException
 
 enum class ToolRisk { READ_ONLY, CHANGES_DEVICE, REMOTE_COMMAND }
 data class ToolInfo(val name: String, val title: String, val description: String, val category: String, val icon: String, val risk: ToolRisk)
-data class ToolResult(val content: String, val needsConfirmation: Boolean = false, val prompt: String = "")
+data class ToolExecutionContext(
+    val taskId: String? = null,
+    val autonomous: Boolean = false,
+    val allowedSshProfileId: String? = null,
+    val operationId: String? = null,
+    val shouldContinue: () -> Boolean = { true }
+)
+data class ToolResult(
+    val content: String,
+    val needsConfirmation: Boolean = false,
+    val prompt: String = "",
+    val pending: Boolean = false,
+    val isError: Boolean = false,
+    val uncertain: Boolean = false,
+    val retryable: Boolean = false
+)
 
 class ToolRegistry(
     private val context: Context,
@@ -60,13 +79,13 @@ class ToolRegistry(
         ToolInfo("device_status", "Устройство", "Показывает сеть, батарею и память", "Устройство", "phone_android", ToolRisk.READ_ONLY)
     )
 
-    fun schemas(): JSONArray = JSONArray().apply {
+    fun schemas(autonomous: Boolean = false): JSONArray = JSONArray().apply {
         put(schema("get_current_time", "Текущие локальные дата, время и часовой пояс"))
         put(schema("device_status", "Состояние устройства, сети, батареи и хранилища"))
         put(schema("web_search", "Найти актуальную информацию в интернете. Для новостей передай kind=news. Возвращает источники и даты.", props("query" to "string", "limit" to "integer", "kind" to "string"), listOf("query")))
         put(schema("web_fetch", "Прочитать содержимое публичной HTTPS-страницы по URL", props("url" to "string"), listOf("url")))
         put(schema("list_ssh_profiles", "Список доступных SSH-профилей без секретов"))
-        put(schema("ssh_exec", "Выполнить команду на сервере из SSH-профиля. Всегда требует подтверждения пользователя.", props("profile" to "string", "command" to "string"), listOf("profile", "command")))
+        put(schema("ssh_exec", "Выполнить команду на сервере из сохранённого SSH-профиля. В автономной задаче используй точный profile id, закреплённый в инструкции.", props("profile" to "string", "command" to "string"), listOf("profile", "command")))
         put(schema("http_request", "Выполнить HTTPS-запрос для проверки API. Требует подтверждения.", props("url" to "string", "method" to "string", "body" to "string"), listOf("url")))
         put(schema("dns_lookup", "Получить IP-адреса публичного домена", props("host" to "string"), listOf("host")))
         put(schema("calculate", "Посчитать арифметическое выражение с + - * / % и скобками", props("expression" to "string"), listOf("expression")))
@@ -88,9 +107,17 @@ class ToolRegistry(
         put(schema("set_timer", "Подготовить таймер", props("seconds" to "integer", "label" to "string"), listOf("seconds")))
         put(schema("add_calendar_event", "Подготовить событие календаря", props("title" to "string", "start_epoch_ms" to "integer", "end_epoch_ms" to "integer", "location" to "string"), listOf("title", "start_epoch_ms")))
         put(schema("open_app_settings", "Открыть настройки приложения Jarvis"))
+        if (autonomous) {
+            put(schema("record_progress", "Записать в журнал краткий проверяемый результат или важный факт. Не включай скрытые рассуждения.", props("title" to "string", "detail" to "string"), listOf("title")))
+            put(schema("finish_task", "Завершить автономную задачу только когда цель фактически достигнута и проверена.", props("summary" to "string", "evidence" to "string"), listOf("summary")))
+        }
     }
 
-    fun execute(name: String, args: JSONObject, confirmed: Boolean = false): ToolResult = try {
+    fun sshContext(): String = profiles.all().joinToString("\n") {
+        "profile_id=${it.id}; name=${it.name}; target=${it.username}@${it.host}:${it.port}; fingerprint=${it.fingerprint.ifBlank { "NOT_TRUSTED" }}"
+    }.ifBlank { "SSH profiles: none" }
+
+    fun execute(name: String, args: JSONObject, confirmed: Boolean = false, execution: ToolExecutionContext = ToolExecutionContext()): ToolResult = try {
         when (name) {
             "get_current_time" -> done(ZonedDateTime.now().toString())
             "device_status" -> done(deviceStatus())
@@ -101,14 +128,26 @@ class ToolRegistry(
                 }).put("diagnostics", JSONArray(outcome.diagnostics)).toString())
             }
             "web_fetch" -> done(web.fetch(args.string("url")))
-            "list_ssh_profiles" -> done(profiles.all().joinToString("\n") { "${it.id}: ${it.name} — ${it.username}@${it.host}:${it.port}" }.ifBlank { "SSH-профили не настроены" })
-            "ssh_exec" -> dangerous(confirmed, "SSH ${args.string("profile")}: ${args.string("command")}") {
+            "list_ssh_profiles" -> done(JSONArray().apply { profiles.all().forEach { profile ->
+                put(JSONObject().put("id", profile.id).put("name", profile.name).put("target", "${profile.username}@${profile.host}:${profile.port}").put("trusted", profile.fingerprint.isNotBlank()))
+            } }.toString())
+            "ssh_exec" -> {
                 val profile = profiles.find(args.string("profile")) ?: error("SSH-профиль не найден")
+                val autonomousGrant = execution.autonomous && execution.allowedSshProfileId == profile.id
+                dangerous(confirmed || autonomousGrant, "SSH ${profile.name}: ${args.string("command")}") {
                 require(profile.fingerprint.isNotBlank()) { "Сначала откройте раздел «Серверы» и нажмите «Проверить», чтобы доверить fingerprint хоста" }
-                val result = ssh.execute(profile, args.string("command"))
-                "exit=${result.exitCode}\nfingerprint=${result.fingerprint}\n${result.output}"
+                    val result = ssh.execute(profile, args.string("command"), execution.operationId, execution.shouldContinue)
+                    when (result.phase.name) {
+                        "RUNNING" -> return@dangerous ToolResult("SSH_OPERATION_RUNNING: ${execution.operationId}", pending = true)
+                        "UNKNOWN" -> return@dangerous ToolResult("SSH_OPERATION_UNKNOWN: команда могла выполниться; сначала проверь фактическое состояние отдельной read-only командой.\n${result.output}", isError = true, uncertain = true)
+                        else -> ToolResult(
+                            content = "exit=${result.exitCode}\nfingerprint=${result.fingerprint}\n${result.output}",
+                            isError = result.exitCode != 0
+                        )
+                    }
+                }
             }
-            "http_request" -> dangerous(confirmed, "${args.optString("method", "GET").uppercase()} ${args.string("url")}") { simpleHttp(args) }
+            "http_request" -> dangerous(confirmed || (execution.autonomous && args.optString("method", "GET").equals("GET", true)), "${args.optString("method", "GET").uppercase()} ${args.string("url")}") { simpleHttp(args) }
             "dns_lookup" -> done(InetAddress.getAllByName(args.string("host")).joinToString("\n") { it.hostAddress ?: "" })
             "calculate" -> done(ExpressionParser(args.string("expression")).parse().toString())
             "json_format" -> done(formatJson(args.string("json")))
@@ -133,14 +172,24 @@ class ToolRegistry(
             "set_timer" -> confirmIntent(confirmed, "Запустить таймер на ${args.getInt("seconds")} сек.?", Intent(AlarmClock.ACTION_SET_TIMER).putExtra(AlarmClock.EXTRA_LENGTH, args.getInt("seconds")).putExtra(AlarmClock.EXTRA_MESSAGE, args.optString("label")))
             "add_calendar_event" -> confirmIntent(confirmed, "Добавить событие «${args.string("title")}»?", Intent(Intent.ACTION_INSERT).setData(CalendarContract.Events.CONTENT_URI).putExtra(CalendarContract.Events.TITLE, args.string("title")).putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, args.getLong("start_epoch_ms")).putExtra(CalendarContract.EXTRA_EVENT_END_TIME, args.optLong("end_epoch_ms", args.getLong("start_epoch_ms") + 3_600_000)).putExtra(CalendarContract.Events.EVENT_LOCATION, args.optString("location")))
             "open_app_settings" -> confirmIntent(confirmed, "Открыть настройки Jarvis?", Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+            "record_progress", "finish_task" -> done("Этот инструмент доступен только координатору автономной задачи")
             else -> done("Ошибка: неизвестный инструмент $name")
         }
+    } catch (error: CancellationException) {
+        throw error
     } catch (error: Exception) {
-        done("Ошибка инструмента $name: ${error.message ?: error.javaClass.simpleName}")
+        ToolResult(
+            "Ошибка инструмента $name: ${error.message ?: error.javaClass.simpleName}",
+            isError = true,
+            retryable = error is IOException || (error is JSchException && isRetryableSshConnectFailure(error.message.orEmpty()))
+        )
     }
 
     private fun done(content: String) = ToolResult(content.take(64_000))
-    private fun dangerous(confirmed: Boolean, prompt: String, action: () -> String) = if (!confirmed) ToolResult("", true, prompt) else done(action())
+    private fun dangerous(confirmed: Boolean, prompt: String, action: () -> Any) = if (!confirmed) ToolResult("", true, prompt) else when (val result = action()) {
+        is ToolResult -> result.copy(content = result.content.take(64_000))
+        else -> done(result.toString())
+    }
     private fun confirmIntent(confirmed: Boolean, prompt: String, intent: Intent) = dangerous(confirmed, prompt) {
         try {
             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

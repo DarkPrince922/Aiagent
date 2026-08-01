@@ -5,13 +5,28 @@ import android.content.Intent
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,6 +56,7 @@ import java.util.Locale
     val state by vm.state.collectAsStateWithLifecycle()
     var historyOpen by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<Conversation?>(null) }
+    var displayedBanner by remember { mutableStateOf(state.banner.orEmpty()) }
     val listState = rememberLazyListState()
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) vm.updateDraft(result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty())
@@ -48,29 +64,38 @@ import java.util.Locale
     LaunchedEffect(state.messages.size, state.pending) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex + if (state.pending != null) 1 else 0)
     }
+    LaunchedEffect(state.banner) {
+        state.banner?.let { displayedBanner = it }
+    }
     Column(Modifier.fillMaxSize()) {
-        Surface(tonalElevation = 2.dp) {
-            Row(Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(42.dp)) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary) } }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(state.activeTitle, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(statusIcon(state.apiStatus), null, Modifier.size(14.dp), tint = statusColor(state.apiStatus))
-                        Spacer(Modifier.width(5.dp))
-                        Text(state.statusText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Surface(color = MaterialTheme.colorScheme.surface) {
+            Column {
+                Row(Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 58.dp).padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(state.activeTitle, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(7.dp).background(statusColor(state.apiStatus), CircleShape))
+                            Spacer(Modifier.width(7.dp))
+                            Text(state.statusText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
+                    IconButton(onClick = { historyOpen = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.History, "История чатов") }
+                    IconButton(onClick = vm::newConversation, enabled = !state.sending && state.pending == null, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.EditNote, "Новый чат") }
+                    IconButton(onClick = openSettings, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Settings, "Настройки") }
                 }
-                IconButton(onClick = { historyOpen = true }) { Icon(Icons.Default.History, "История чатов") }
-                IconButton(onClick = vm::newConversation, enabled = !state.sending && state.pending == null) { Icon(Icons.Default.EditNote, "Новый чат") }
-                IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Настройки") }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
-        AnimatedVisibility(state.banner != null) {
-            Surface(color = if (state.apiStatus == ApiStatus.ERROR || state.apiStatus == ApiStatus.OFFLINE) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer) {
+        AnimatedVisibility(
+            visible = state.banner != null,
+            enter = expandVertically(animationSpec = tween(180), expandFrom = Alignment.Top) + fadeIn(tween(150)),
+            exit = shrinkVertically(animationSpec = tween(140), shrinkTowards = Alignment.Top) + fadeOut(tween(100))
+        ) {
+            val alertColor = if (state.apiStatus == ApiStatus.ERROR || state.apiStatus == ApiStatus.OFFLINE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
+            Surface(color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, alertColor.copy(alpha = 0.45f))) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (state.apiStatus == ApiStatus.OFFLINE) Icons.Default.CloudOff else Icons.Default.Info, null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(10.dp)); Text(state.banner.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    Icon(if (state.apiStatus == ApiStatus.OFFLINE) Icons.Default.CloudOff else Icons.Default.Info, null, Modifier.size(20.dp), tint = alertColor)
+                    Spacer(Modifier.width(10.dp)); Text(displayedBanner, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                     if (state.apiStatus == ApiStatus.ERROR) IconButton(onClick = openSettings, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Tune, "Исправить настройки") }
                 }
             }
@@ -125,9 +150,10 @@ import java.util.Locale
         }
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(conversations, key = { it.id }) { conversation ->
-                Surface(onClick = { if (enabled) select(conversation.id) }, shape = RoundedCornerShape(8.dp), color = if (conversation.id == activeId) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+                val active = conversation.id == activeId
+                Surface(onClick = { if (enabled) select(conversation.id) }, shape = RoundedCornerShape(8.dp), color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 9.dp, bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (conversation.id == activeId) Icons.Default.ChatBubble else Icons.Default.ChatBubbleOutline, null)
+                        Icon(if (active) Icons.Default.ChatBubble else Icons.Default.ChatBubbleOutline, null)
                         Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(conversation.title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(conversation.updatedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         IconButton(onClick = { if (enabled) delete(conversation) }, enabled = enabled) { Icon(Icons.Default.DeleteOutline, "Удалить чат") }
                     }
@@ -150,7 +176,7 @@ import java.util.Locale
         Spacer(Modifier.height(6.dp)); Text("Поручите задачу целиком. Jarvis сам выберет нужные инструменты.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(22.dp))
         prompts.forEach { (icon, title, prompt) ->
-            Surface(onClick = { onPrompt(prompt) }, shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Surface(onClick = { onPrompt(prompt) }, shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text(title, Modifier.weight(1f)); Icon(Icons.Default.ChevronRight, null) }
             }
         }
@@ -161,14 +187,15 @@ import java.util.Locale
 @Composable private fun MessageBubble(message: Message, retry: () -> Unit) {
     val user = message.role == "user"
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
-        if (!user) { Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(30.dp)) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, Modifier.size(18.dp)) } }; Spacer(Modifier.width(8.dp)) }
-        Surface(shape = RoundedCornerShape(8.dp), color = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(.86f)) {
+        if (!user) { Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)), modifier = Modifier.size(30.dp)) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Terminal, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.secondary) } }; Spacer(Modifier.width(8.dp)) }
+        Surface(shape = RoundedCornerShape(8.dp), color = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, if (user) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(.86f)) {
             Column(Modifier.padding(12.dp)) {
                 SelectionContainer { Text(message.text, style = if (message.text.contains("```")) MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge) }
                 when (message.state) {
                     DeliveryState.SENDING -> MessageStatus(Icons.Default.Sync, "Отправка")
                     DeliveryState.QUEUED -> MessageStatus(Icons.Default.CloudUpload, "В очереди")
                     DeliveryState.FAILED -> Row(verticalAlignment = Alignment.CenterVertically) { MessageStatus(Icons.Default.ErrorOutline, message.detail ?: "Ошибка"); IconButton(onClick = retry, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Refresh, "Повторить", Modifier.size(18.dp)) } }
+                    DeliveryState.CANCELLED -> Row(verticalAlignment = Alignment.CenterVertically) { MessageStatus(Icons.Default.StopCircle, message.detail ?: "Остановлено"); IconButton(onClick = retry, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Refresh, "Запустить снова", Modifier.size(18.dp)) } }
                     DeliveryState.SENT -> Unit
                 }
             }
@@ -179,7 +206,7 @@ import java.util.Locale
 @Composable private fun MessageStatus(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) { Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(4.dp)); Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
 
 @Composable private fun ConfirmationPanel(label: String, approve: () -> Unit, reject: () -> Unit) {
-    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.AdminPanelSettings, null); Spacer(Modifier.width(10.dp)); Text("Требуется подтверждение", style = MaterialTheme.typography.titleMedium) }
             Spacer(Modifier.height(8.dp)); SelectionContainer { Text(label, fontFamily = if (label.startsWith("SSH")) FontFamily.Monospace else FontFamily.Default) }
@@ -188,18 +215,44 @@ import java.util.Locale
     }
 }
 
-@Composable private fun ThinkingRow() { Row(Modifier.padding(start = 42.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(9.dp)); Text("Jarvis работает", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+@Composable private fun ThinkingRow() {
+    val transition = rememberInfiniteTransition(label = "agent-running")
+    val pulse by transition.animateFloat(
+        initialValue = 0.32f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(720, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "running-pulse"
+    )
+    Row(Modifier.padding(start = 42.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(9.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = pulse), CircleShape))
+        Spacer(Modifier.width(9.dp))
+        Text("JARVIS / ВЫПОЛНЕНИЕ", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
 
 @Composable private fun ChatComposer(draft: String, enabled: Boolean, sending: Boolean, onDraft: (String) -> Unit, onSend: () -> Unit, onStop: () -> Unit, onVoice: () -> Unit) {
-    Surface(tonalElevation = 3.dp) {
-        Row(Modifier.fillMaxWidth().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
-            IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Default.Mic, "Голосовой ввод") }
-            OutlinedTextField(draft, onDraft, Modifier.weight(1f), placeholder = { Text("Поручить задачу") }, maxLines = 5, enabled = enabled, shape = RoundedCornerShape(8.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onSend() }))
-            Spacer(Modifier.width(8.dp)); if (sending) FilledIconButton(onClick = onStop, modifier = Modifier.size(52.dp), shape = RoundedCornerShape(8.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Default.Stop, "Остановить") }
-            else FilledIconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.size(52.dp), shape = RoundedCornerShape(8.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Отправить") }
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Column {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
+                IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Default.Mic, "Голосовой ввод") }
+                OutlinedTextField(draft, onDraft, Modifier.weight(1f), placeholder = { Text("Поручить задачу") }, maxLines = 5, enabled = enabled, shape = RoundedCornerShape(8.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onSend() }))
+                Spacer(Modifier.width(8.dp))
+                AnimatedContent(
+                    targetState = sending,
+                    modifier = Modifier.size(52.dp),
+                    transitionSpec = {
+                        (scaleIn(tween(180), initialScale = 0.86f) + fadeIn(tween(160))) togetherWith
+                            (scaleOut(tween(120), targetScale = 0.9f) + fadeOut(tween(100)))
+                    },
+                    label = "send-stop"
+                ) { isSending ->
+                    if (isSending) FilledIconButton(onClick = onStop, modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(8.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Default.Stop, "Остановить") }
+                    else FilledIconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(8.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Отправить") }
+                }
+            }
         }
     }
 }
 
-private fun statusIcon(status: ApiStatus) = when (status) { ApiStatus.ONLINE -> Icons.Default.CloudDone; ApiStatus.CHECKING -> Icons.Default.Sync; ApiStatus.OFFLINE -> Icons.Default.CloudOff; ApiStatus.ERROR -> Icons.Default.ErrorOutline; ApiStatus.NOT_CONFIGURED -> Icons.Default.CloudQueue }
 @Composable private fun statusColor(status: ApiStatus): Color = when (status) { ApiStatus.ONLINE -> MaterialTheme.colorScheme.primary; ApiStatus.ERROR, ApiStatus.OFFLINE -> MaterialTheme.colorScheme.error; else -> MaterialTheme.colorScheme.onSurfaceVariant }
