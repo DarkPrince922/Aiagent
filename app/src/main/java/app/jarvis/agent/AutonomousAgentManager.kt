@@ -231,8 +231,11 @@ class AutonomousAgentManager(
             return CallOutcome.TaskFinished
         }
 
-        if (existing?.status in setOf(AgentOperationStatus.SUCCEEDED, AgentOperationStatus.FAILED, AgentOperationStatus.UNKNOWN) && existing.result != null) {
-            val updated = appendToolResult(messages, call.id, existing.result)
+        val storedResult = existing?.takeIf {
+            it.status in setOf(AgentOperationStatus.SUCCEEDED, AgentOperationStatus.FAILED, AgentOperationStatus.UNKNOWN)
+        }?.result
+        if (storedResult != null) {
+            val updated = appendToolResult(messages, call.id, storedResult)
             store.updateCheckpoint(task.id, encodeMessages(updated), step, "Восстановлен результат ${call.name}")
             return CallOutcome.Completed(updated)
         }
