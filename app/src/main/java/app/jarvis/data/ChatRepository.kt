@@ -52,7 +52,7 @@ class ChatRepository(
     fun send(history: List<Message>, shouldContinue: () -> Boolean = { true }, allowUnlimited: Boolean = true): Result<AgentReply> = runCatching {
         val saved = settingsStore.get()
         val settings = if (allowUnlimited) saved else saved.copy(unlimitedAgent = false, agentSteps = 10)
-        require(settings.apiKey.isNotBlank()) { "Добавьте API-ключ в настройках" }
+        settings.readinessError?.let { throw IllegalArgumentException(it) }
         val messages = buildList {
             add(ApiMessage("system", "${settings.systemPrompt}\nТекущие локальные дата и время: ${ZonedDateTime.now()}\nСохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}"))
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }

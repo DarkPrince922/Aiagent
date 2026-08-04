@@ -43,6 +43,18 @@ data class ProviderSettings(
     val toolsEnabled: Boolean = true
 )
 
+/**
+ * Чего не хватает выбранному движку для работы, или null, если всё готово.
+ *
+ * Раньше наличие API-ключа требовалось безусловно, из-за чего локальный режим,
+ * которому ключ не нужен вовсе, отказывался отправлять сообщения.
+ */
+val ProviderSettings.readinessError: String?
+    get() = when (engine) {
+        LlmEngine.CLOUD -> if (apiKey.isBlank()) "Добавьте API-ключ в настройках" else null
+        LlmEngine.LOCAL -> if (localModelPath.isBlank()) "Скачайте локальную модель в настройках" else null
+    }
+
 data class Conversation(
     val id: String,
     val title: String,

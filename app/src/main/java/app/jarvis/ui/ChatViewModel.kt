@@ -47,7 +47,9 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
             }
             mutable.value = mutable.value.copy(conversations = initial.first, activeConversationId = initial.second, messages = initial.third, loading = false)
         }
-        if (repository.settings().apiKey.isNotBlank()) checkConnection()
+        val readiness = repository.settings().readinessError
+        // Иначе в локальном режиме шапка советовала бы добавить API-ключ, который там не нужен.
+        if (readiness == null) checkConnection() else mutable.value = mutable.value.copy(statusText = readiness)
         viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(2_500)

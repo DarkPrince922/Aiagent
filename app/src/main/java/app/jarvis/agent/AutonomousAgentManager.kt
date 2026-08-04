@@ -18,6 +18,7 @@ import app.jarvis.data.ConversationStore
 import app.jarvis.data.Message
 import app.jarvis.data.SettingsStore
 import app.jarvis.data.SshProfileStore
+import app.jarvis.data.readinessError
 import app.jarvis.net.ApiMessage
 import app.jarvis.net.ApiToolCall
 import app.jarvis.net.ChatApi
@@ -56,7 +57,7 @@ class AutonomousAgentManager(
         val goal = objective.trim()
         require(goal.length >= 8) { "Опишите задачу чуть подробнее" }
         require(goal.length <= 8_000) { "Цель слишком длинная; сократите её до 8000 символов" }
-        require(settings.get().apiKey.isNotBlank()) { "Сначала добавьте API-ключ в настройках" }
+        settings.get().readinessError?.let { throw IllegalStateException(it) }
         val profile = sshProfileId?.let { id -> profiles.find(id) ?: error("SSH-профиль не найден") }
         if (profile != null && autoApproveSsh) {
             require(profile.fingerprint.isNotBlank()) { "Сначала проверьте SSH-профиль и закрепите fingerprint хоста" }
