@@ -30,5 +30,19 @@
         <receiver
             android:name=".worker.AgentControlReceiver"
             android:exported="false" />
+
+        <!-- JarvisApp реализует Configuration.Provider, то есть инициализирует WorkManager
+             по требованию. Дефолтный WorkManagerInitializer поднимал бы его раньше, на
+             стандартной конфигурации, и наша просто игнорировалась бы. Убираем только его,
+             не трогая androidx.startup целиком: там же инициализируется emoji2. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+        </provider>
     </application>
 </manifest>
