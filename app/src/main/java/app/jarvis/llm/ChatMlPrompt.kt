@@ -18,10 +18,11 @@ object ChatMlPrompt {
     private const val IM_END = "<|im_end|>"
 
     /**
-     * @param enableThinking Qwen3 по умолчанию рассуждает вслух. Для агент-цикла это лишние
-     *   десятки секунд на шаг, поэтому по умолчанию блок рассуждений закрывается пустым.
+     * @param suppressThinking закрыть блок рассуждений пустым. Помогает только think-версиям
+     *   Qwen3; у Instruct-моделей `<think>` не спецтокен, и подстановка отправляет модель
+     *   генерировать мусор до упора в лимит токенов. По умолчанию выключено.
      */
-    fun render(messages: List<ApiMessage>, toolSchemas: JSONArray, enableThinking: Boolean = false): String {
+    fun render(messages: List<ApiMessage>, toolSchemas: JSONArray, suppressThinking: Boolean = false): String {
         val builder = StringBuilder()
         var index = 0
         var systemWritten = false
@@ -62,7 +63,7 @@ object ChatMlPrompt {
         }
         if (!systemWritten) builder.insert(0, turnText("system", system("", toolSchemas)))
         builder.append(IM_START).append("assistant\n")
-        if (!enableThinking) builder.append("<think>\n\n</think>\n\n")
+        if (suppressThinking) builder.append("<think>\n\n</think>\n\n")
         return builder.toString()
     }
 

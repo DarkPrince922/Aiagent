@@ -112,7 +112,9 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
             val result = withContext(Dispatchers.IO) {
                 repository.saveMessage(conversationId, user)
                 repository.titleFromFirstMessage(conversationId, text)
-                repository.send(history, shouldContinue = flag::get)
+                repository.send(history, shouldContinue = flag::get) { note ->
+                    if (flag.get()) mutable.value = mutable.value.copy(statusText = note)
+                }
             }
             if (flag.get()) applyResult(conversationId, user, result)
         }

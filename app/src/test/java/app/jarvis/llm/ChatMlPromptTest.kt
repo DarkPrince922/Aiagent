@@ -26,16 +26,20 @@ class ChatMlPromptTest {
         assertTrue(prompt.contains("<tools>\n{"))
         assertTrue(prompt.contains("web_search"))
         assertTrue(prompt.contains("<|im_start|>user\nпривет<|im_end|>"))
-        assertTrue(prompt.trimEnd().endsWith("</think>"))
+        assertTrue(prompt.endsWith("<|im_start|>assistant\n"))
     }
 
-    @Test fun thinkingIsSuppressedByDefaultAndCanBeEnabled() {
-        val quiet = ChatMlPrompt.render(listOf(ApiMessage("user", "x")), JSONArray())
-        assertTrue(quiet.endsWith("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
+    @Test fun thinkTagIsNotInjectedByDefault() {
+        // У Instruct-моделей <think> не спецтокен: подстановка отправляла модель
+        // генерировать мусор до упора в лимит токенов на каждом шаге.
+        val plain = ChatMlPrompt.render(listOf(ApiMessage("user", "x")), JSONArray())
+        assertTrue(plain.endsWith("<|im_start|>assistant\n"))
+        assertFalse(plain.contains("<think>"))
+    }
 
-        val thinking = ChatMlPrompt.render(listOf(ApiMessage("user", "x")), JSONArray(), enableThinking = true)
-        assertTrue(thinking.endsWith("<|im_start|>assistant\n"))
-        assertFalse(thinking.contains("<think>"))
+    @Test fun thinkingCanBeSuppressedExplicitlyForThinkModels() {
+        val quiet = ChatMlPrompt.render(listOf(ApiMessage("user", "x")), JSONArray(), suppressThinking = true)
+        assertTrue(quiet.endsWith("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
     }
 
     @Test fun assistantToolCallsAreRenderedAsToolCallTags() {

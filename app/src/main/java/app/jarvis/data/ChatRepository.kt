@@ -52,15 +52,27 @@ class ChatRepository(
     fun deleteMessage(id: Long) = conversationStore.deleteMessage(id)
     fun titleFromFirstMessage(conversationId: String, text: String) = conversationStore.titleFromFirstMessage(conversationId, text)
 
-    fun send(history: List<Message>, shouldContinue: () -> Boolean = { true }, allowUnlimited: Boolean = true): Result<AgentReply> = runCatching {
+    fun send(
+        history: List<Message>,
+        shouldContinue: () -> Boolean = { true },
+        allowUnlimited: Boolean = true,
+        onProgress: (String) -> Unit = {}
+    ): Result<AgentReply> = runCatching {
         val saved = settingsStore.get()
-        val settings = if (allowUnlimited) saved else saved.copy(unlimitedAgent = false, agentSteps = 10)
+        val limited = if (allowUnlimited) saved else saved.copy(unlimitedAgent = false, agentSteps = 10)
+        // Каждый шаг локальной модели — это полный prefill и сотни токенов декода, то есть
+        // минуты. Восемь шагов подряд превращали простой вопрос в получасовое ожидание.
+        val settings = if (limited.engine == LlmEngine.LOCAL) {
+            limited.copy(unlimitedAgent = false, agentSteps = limited.agentSteps.coerceAtMost(MAX_LOCAL_STEPS))
+        } else {
+            limited
+        }
         settings.readinessError?.let { throw IllegalArgumentException(it) }
         val messages = buildList {
             add(ApiMessage("system", "${settings.systemPrompt}\nТекущие локальные дата и время: ${ZonedDateTime.now()}\nСохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}"))
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
-        runAgent(settings, messages, shouldContinue)
+        runAgent(settings, messages, shouldContinue, onProgress)
     }
 
     fun confirm(action: PendingAgentAction, approved: Boolean, shouldContinue: () -> Boolean = { true }): Result<AgentReply> = runCatching {
@@ -121,7 +133,12 @@ class ChatRepository(
         return false
     }
 
-    private fun runAgent(settings: ProviderSettings, initial: List<ApiMessage>, shouldContinue: () -> Boolean): AgentReply {
+    private fun runAgent(
+        settings: ProviderSettings,
+        initial: List<ApiMessage>,
+        shouldContinue: () -> Boolean,
+        onProgress: (String) -> Unit = {}
+    ): AgentReply {
         var messages = initial
         var fallbackNotice: String? = null
         var step = 0
@@ -130,6 +147,8 @@ class ChatRepository(
         while (settings.unlimitedAgent || step < settings.agentSteps.coerceIn(1, 20)) {
             if (!shouldContinue()) throw CancellationException("Остановлено пользователем")
             step++
+            // Локальная модель думает минутами: без этого экран выглядит зависшим.
+            onProgress(if (step == 1) "Модель думает" else "Шаг $step: модель думает")
             messages = compactContext(messages)
             val answer = try {
                 api.complete(settings, messages, if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray())
@@ -149,6 +168,7 @@ class ChatRepository(
                 return synthesize(settings, messages, fallbackNotice, "Модель повторяла один и тот же инструмент")
             }
             answer.toolCalls.forEachIndexed { index, call ->
+                onProgress("Инструмент: ${call.name}")
                 val result = tools.execute(call.name, call.arguments)
                 if (result.needsConfirmation) {
                     return AgentReply("Нужно ваше подтверждение", PendingAgentAction(result.prompt, messages, answer.toolCalls.drop(index), settings), fallbackNotice)
@@ -156,6 +176,7 @@ class ChatRepository(
                 messages = messages + ApiMessage("tool", result.content, toolCallId = call.id)
             }
         }
+        onProgress("Формирую итоговый ответ")
         return synthesize(settings, messages, fallbackNotice, "Достигнут настроенный лимит шагов")
     }
 
@@ -177,4 +198,5 @@ class ChatRepository(
         return messages
     }
 
+    private companion object { const val MAX_LOCAL_STEPS = 2 }
 }
