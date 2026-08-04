@@ -80,7 +80,22 @@ class ToolRegistry(
         ToolInfo("device_status", "Устройство", "Показывает сеть, батарею и память", "Устройство", "phone_android", ToolRisk.READ_ONLY)
     )
 
-    fun schemas(autonomous: Boolean = false): JSONArray = JSONArray().apply {
+    /**
+     * @param compact оставить только дешёвый набор для локальной модели. Полные 27 схем — это
+     *   больше двух тысяч токенов в каждом промпте: облаку всё равно, а 4B-модель на телефоне
+     *   тратит на их prefill больше времени, чем на сам ответ.
+     */
+    fun schemas(autonomous: Boolean = false, compact: Boolean = false): JSONArray {
+        val all = allSchemas(autonomous)
+        if (!compact) return all
+        return JSONArray().apply {
+            List(all.length()) { all.getJSONObject(it) }
+                .filter { it.optJSONObject("function")?.optString("name") in LOCAL_TOOLS }
+                .forEach { put(it) }
+        }
+    }
+
+    private fun allSchemas(autonomous: Boolean): JSONArray = JSONArray().apply {
         put(schema("get_current_time", "Текущие локальные дата, время и часовой пояс"))
         put(schema("device_status", "Состояние устройства, сети, батареи и хранилища"))
         put(schema("web_search", "Найти актуальную информацию в интернете. Для новостей передай kind=news. Возвращает источники и даты.", props("query" to "string", "limit" to "integer", "kind" to "string"), listOf("query")))
@@ -244,6 +259,24 @@ class ToolRegistry(
     private fun JSONObject.string(name: String) = getString(name).trim()
     private fun props(vararg values: Pair<String, String>) = JSONObject().apply { values.forEach { (name, type) -> put(name, JSONObject().put("type", type)) } }
     private fun schema(name: String, description: String, properties: JSONObject = JSONObject(), required: List<String> = emptyList()) = JSONObject().put("type", "function").put("function", JSONObject().put("name", name).put("description", description).put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)).put("additionalProperties", false)))
+    private companion object {
+        /**
+         * Инструменты, оставленные локальной модели: дешёвые по токенам, с коротким выводом
+         * и безопасные. SSH и web_fetch исключены намеренно — их вывод в десятки килобайт
+         * не помещается в контекст телефонной модели.
+         */
+        val LOCAL_TOOLS = setOf(
+            "get_current_time",
+            "device_status",
+            "calculate",
+            "list_notes",
+            "create_note",
+            "web_search",
+            "set_timer",
+            "open_url"
+        )
+    }
+
 }
 
 internal class ExpressionParser(private val source: String) {

@@ -12,6 +12,7 @@ import app.jarvis.net.ApiToolCall
 import app.jarvis.net.ChatApi
 import app.jarvis.net.ChatFailure
 import app.jarvis.net.ConnectionCheck
+import app.jarvis.llm.LanguageModelRouter
 import app.jarvis.net.LanguageModel
 import app.jarvis.tools.ToolRegistry
 import app.jarvis.worker.RetryWorker
@@ -37,6 +38,8 @@ class ChatRepository(
     private val tools: ToolRegistry
 ) {
     fun settings() = settingsStore.get()
+    /** Прерывает счёт локальной модели: без этого следующий запрос ждёт освобождения движка. */
+    fun cancelLocalGeneration() = (api as? LanguageModelRouter)?.cancelLocal()
     fun saveSettings(value: ProviderSettings) = settingsStore.save(value)
     fun catalog() = tools.catalog
     fun checkConnection(value: ProviderSettings = settingsStore.get()): ConnectionCheck = api.check(value)
@@ -129,7 +132,7 @@ class ChatRepository(
             step++
             messages = compactContext(messages)
             val answer = try {
-                api.complete(settings, messages, if (settings.toolsEnabled) tools.schemas() else org.json.JSONArray())
+                api.complete(settings, messages, if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray())
             } catch (error: ChatFailure.Http) {
                 val toolRejected = error.status == 400 && (error.serverMessage.contains("tool", true) || error.serverMessage.contains("function", true))
                 if (!toolRejected || !settings.toolsEnabled) throw error

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,11 @@ struct Session {
     const llama_vocab  * vocab = nullptr;
     std::atomic<bool>    cancelled{false};
 };
+
+int64_t now_ms() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 Session * session_of(jlong handle) {
     return reinterpret_cast<Session *>(handle);
@@ -173,8 +179,10 @@ Java_app_jarvis_llm_LlamaBridge_nativeLoad(JNIEnv * env, jobject, jbyteArray pat
 
     llama_context_params context_params = llama_context_default_params();
     context_params.n_ctx           = static_cast<uint32_t>(context_tokens);
-    context_params.n_batch         = 512;
-    context_params.n_ubatch        = 128;
+    // Prefill упирается в физический батч: 128 давал вчетверо больше проходов по
+    // двухтысячетокенному промпту, чем нужно.
+    context_params.n_batch         = 1024;
+    context_params.n_ubatch        = 512;
     context_params.n_threads       = threads;
     context_params.n_threads_batch = threads;
 
@@ -254,13 +262,17 @@ Java_app_jarvis_llm_LlamaBridge_nativeGenerate(JNIEnv * env, jobject, jlong hand
         return nullptr;
     }
 
+    const int64_t prefill_started = now_ms();
     if (!feed_prompt(session, tokens)) {
         return string_to_bytes(env, "");
     }
+    const int64_t prefill_ms = now_ms() - prefill_started;
 
     llama_sampler * sampler = build_sampler(session, bytes_to_string(env, grammar_utf8),
                                             temperature, top_p, top_k, seed);
     std::string output;
+    const int64_t decode_started = now_ms();
+    int32_t generated = 0;
     const int32_t budget = std::min(max_tokens, context_tokens - static_cast<int32_t>(tokens.size()) - 1);
     for (int32_t produced = 0; produced < budget; ++produced) {
         if (session->cancelled.load()) {
@@ -271,6 +283,7 @@ Java_app_jarvis_llm_LlamaBridge_nativeGenerate(JNIEnv * env, jobject, jlong hand
             break;
         }
         output += token_to_text(session->vocab, token);
+        ++generated;
 
         llama_token next = token;
         llama_batch batch = llama_batch_get_one(&next, 1);
@@ -280,6 +293,13 @@ Java_app_jarvis_llm_LlamaBridge_nativeGenerate(JNIEnv * env, jobject, jlong hand
         }
     }
     llama_sampler_free(sampler);
+    // Единственный способ отличить «модель медленная» от «что-то залипло» — увидеть цифры.
+    const int64_t decode_ms = now_ms() - decode_started;
+    LOGI("prefill %zu tokens in %lld ms (%.1f tok/s), generated %d in %lld ms (%.1f tok/s)",
+         tokens.size(), static_cast<long long>(prefill_ms),
+         prefill_ms > 0 ? tokens.size() * 1000.0 / prefill_ms : 0.0,
+         generated, static_cast<long long>(decode_ms),
+         decode_ms > 0 ? generated * 1000.0 / decode_ms : 0.0);
     return string_to_bytes(env, output);
 }
 

@@ -121,6 +121,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun stop() {
         continueFlag.set(false)
+        repository.cancelLocalGeneration()
         agentJob?.cancel()
         agentJob = null
         val conversationId = mutable.value.activeConversationId

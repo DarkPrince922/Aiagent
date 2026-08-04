@@ -15,6 +15,7 @@ import app.jarvis.data.AgentTaskEvent
 import app.jarvis.data.AgentTaskStatus
 import app.jarvis.data.AgentTaskStore
 import app.jarvis.data.ConversationStore
+import app.jarvis.data.LlmEngine
 import app.jarvis.data.Message
 import app.jarvis.data.SettingsStore
 import app.jarvis.data.SshProfileStore
@@ -158,7 +159,7 @@ class AutonomousAgentManager(
                         messages = compacted
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Контекст сжат; ключевые события сохранены")
                     }
-                    val answer = api.complete(currentSettings, messages, tools.schemas(autonomous = true))
+                    val answer = api.complete(currentSettings, messages, tools.schemas(autonomous = true, compact = currentSettings.engine == LlmEngine.LOCAL))
                     ensureRunning(taskId, shouldContinue)
                     step++
                     messages = messages + answer.rawMessage
