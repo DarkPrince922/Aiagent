@@ -65,6 +65,11 @@ fun JarvisRoot(container: AppContainer) {
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
             AutonomyViewModel(container.autonomous, container.sshProfiles) as T
     })
+    val modelsVm: ModelsViewModel = viewModel(key = "models", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+            ModelsViewModel(container.modelDownloads, container.settings) as T
+    })
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -140,7 +145,7 @@ fun JarvisRoot(container: AppContainer) {
                         val initial by produceState<ProviderSettings?>(null) {
                             value = withContext(Dispatchers.IO) { container.settings.get() }
                         }
-                        initial?.let { SettingsScreen(vm, it) }
+                        initial?.let { SettingsScreen(vm, modelsVm, it) }
                     }
                 }
             }

@@ -12,7 +12,9 @@ import app.jarvis.data.SshProfileStore
 import app.jarvis.net.ChatApi
 import app.jarvis.net.SshService
 import app.jarvis.net.WebService
+import app.jarvis.data.ModelStore
 import app.jarvis.llm.LanguageModelRouter
+import app.jarvis.llm.ModelDownloads
 import app.jarvis.llm.LocalLanguageModel
 import app.jarvis.tools.ToolRegistry
 import app.jarvis.worker.AgentNotifications
@@ -29,6 +31,8 @@ class AppContainer(context: Context) {
     val ssh = SshService(sshProfiles)
     val tools = ToolRegistry(context, notes, sshProfiles, web, ssh)
     val notifications = AgentNotifications(context)
+    val modelStore = ModelStore(context)
+    val modelDownloads = ModelDownloads(context, modelStore, settings)
     val localModel = LocalLanguageModel()
     /** Агент-цикл работает через роутер и не знает, считает ответ облако или llama.cpp. */
     val models = LanguageModelRouter(api, localModel)

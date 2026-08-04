@@ -89,6 +89,54 @@ class AgentNotifications(context: Context) {
 
     fun cancelProgress(taskId: String) = manager.cancel(notificationId(taskId))
 
+    fun downloadForegroundInfo(title: String, downloaded: Long, total: Long?): ForegroundInfo {
+        val notification = download(title, downloaded, total)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(DOWNLOAD_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            ForegroundInfo(DOWNLOAD_NOTIFICATION_ID, notification)
+        }
+    }
+
+    fun updateDownload(title: String, downloaded: Long, total: Long?) {
+        runCatching { manager.notify(DOWNLOAD_NOTIFICATION_ID, download(title, downloaded, total)) }
+    }
+
+    fun notifyDownloadFinished(title: String, message: String) {
+        manager.cancel(DOWNLOAD_NOTIFICATION_ID)
+        val notification = Notification.Builder(app, RESULT_CHANNEL)
+            .setContentTitle(title.ifBlank { "Загрузка модели" })
+            .setContentText(message)
+            .setStyle(Notification.BigTextStyle().bigText(message))
+            .setSmallIcon(R.drawable.ic_agent_status)
+            .setAutoCancel(true)
+            .setContentIntent(openApp())
+            .build()
+        runCatching { manager.notify(DOWNLOAD_RESULT_NOTIFICATION_ID, notification) }
+    }
+
+    private fun download(title: String, downloaded: Long, total: Long?): Notification {
+        val builder = Notification.Builder(app, PROGRESS_CHANNEL)
+            .setContentTitle(title.ifBlank { "Загрузка модели" })
+            .setContentText(progressText(downloaded, total))
+            .setSmallIcon(R.drawable.ic_agent_status)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openApp())
+        // Размер известен не всегда: без Content-Length показываем бесконечный индикатор.
+        if (total != null && total > 0) {
+            builder.setProgress(100, ((downloaded * 100) / total).toInt().coerceIn(0, 100), false)
+        } else {
+            builder.setProgress(0, 0, true)
+        }
+        return builder.build()
+    }
+
+    private fun progressText(downloaded: Long, total: Long?): String {
+        val done = downloaded / (1024 * 1024)
+        return if (total != null && total > 0) "$done из ${total / (1024 * 1024)} МБ" else "$done МБ"
+    }
+
     private fun action(title: String, action: String, taskId: String): Notification.Action =
         Notification.Action.Builder(
             Icon.createWithResource(app, R.drawable.ic_agent_status),
@@ -117,5 +165,9 @@ class AgentNotifications(context: Context) {
     companion object {
         const val PROGRESS_CHANNEL = "jarvis_agent_progress"
         const val RESULT_CHANNEL = "jarvis_agent_result"
+        // Идентификаторы задач выводятся из хеша в диапазоне 1..0x8000, поэтому загрузка
+        // берёт номера заведомо выше и не может перезаписать уведомление задачи.
+        private const val DOWNLOAD_NOTIFICATION_ID = 0x10001
+        private const val DOWNLOAD_RESULT_NOTIFICATION_ID = 0x10002
     }
 }

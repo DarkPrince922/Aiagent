@@ -21,11 +21,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.jarvis.data.LlmEngine
 import app.jarvis.data.ProviderSettings
 
-@Composable fun SettingsScreen(vm: ChatViewModel, initial: ProviderSettings) {
+@Composable fun SettingsScreen(vm: ChatViewModel, models: ModelsViewModel, initial: ProviderSettings) {
     var value by remember(initial) { mutableStateOf(initial) }
     var keyVisible by remember { mutableStateOf(false) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val models = listOf("claude-opus-4-8", "claude-sonnet-4-5", "gpt-5.2", "gpt-4.1")
+    val cloudModels = listOf("claude-opus-4-8", "claude-sonnet-4-5", "gpt-5.2", "gpt-4.1")
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Surface(color = MaterialTheme.colorScheme.surface) {
@@ -53,7 +53,8 @@ import app.jarvis.data.ProviderSettings
             }
         }
         if (value.engine == LlmEngine.LOCAL) {
-            item { SettingsField { OutlinedTextField(value.localModelPath, { value = value.copy(localModelPath = it.trim()) }, Modifier.fillMaxWidth(), label = { Text("Файл модели (.gguf)") }, leadingIcon = { Icon(Icons.Default.Folder, null) }, supportingText = { Text("adb push Qwen3-4B-Q4_K_M.gguf /sdcard/Download/") }, textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
+            item { SectionTitle("Модели", Icons.Default.Download) }
+            item { ModelsSection(models) }
             item {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text("Контекст: ${value.localContextTokens} токенов", style = MaterialTheme.typography.titleSmall)
@@ -73,7 +74,7 @@ import app.jarvis.data.ProviderSettings
         item { SectionTitle("AI-провайдер", Icons.Default.Cloud) }
         item { SettingsField { OutlinedTextField(value.endpoint, { value = value.copy(endpoint = it) }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, leadingIcon = { Icon(Icons.Default.Link, null) }, supportingText = { Text("OpenAI-совместимый адрес, заканчивающийся на /v1") }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
         item { SettingsField { OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(), label = { Text("Модель") }, leadingIcon = { Icon(Icons.Default.Memory, null) }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
-        item { LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(models) { model -> SuggestionChip(onClick = { value = value.copy(model = model) }, label = { Text(model) }, icon = if (value.model == model) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null) } } }
+        item { LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(cloudModels) { model -> SuggestionChip(onClick = { value = value.copy(model = model) }, label = { Text(model) }, icon = if (value.model == model) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null) } } }
         item { SettingsField { OutlinedTextField(value.apiKey, { value = value.copy(apiKey = it) }, Modifier.fillMaxWidth(), label = { Text("API-ключ") }, leadingIcon = { Icon(Icons.Default.Key, null) }, trailingIcon = { IconButton(onClick = { keyVisible = !keyVisible }) { Icon(if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (keyVisible) "Скрыть" else "Показать") } }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, supportingText = { Text("Шифруется ключом Android Keystore") }) } }
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
