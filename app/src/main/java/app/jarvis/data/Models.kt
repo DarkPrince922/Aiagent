@@ -23,10 +23,20 @@ data class Message(
     val detail: String? = null
 )
 enum class DeliveryState { SENDING, QUEUED, SENT, FAILED, CANCELLED }
+/** Откуда берутся ответы модели. */
+enum class LlmEngine { CLOUD, LOCAL }
+
 data class ProviderSettings(
     val endpoint: String = "https://aiprovider.duckdns.org/v1",
     val model: String = "claude-opus-4-8",
     val apiKey: String = "",
+    val engine: LlmEngine = LlmEngine.CLOUD,
+    /** Путь к GGUF-файлу, например /sdcard/Download/Qwen3-4B-Q4_K_M.gguf */
+    val localModelPath: String = "",
+    val localContextTokens: Int = 4_096,
+    val localMaxTokens: Int = 768,
+    /** 0 — подобрать по числу ядер. */
+    val localThreads: Int = 0,
     val systemPrompt: String = """Ты Jarvis, личный Android-ассистент пользователя. Самостоятельно разбивай задачи на шаги и используй доступные инструменты. Для актуальной информации сначала выполняй web_search, затем при необходимости web_fetch. Никогда не выдумывай результат инструмента. Опасные или изменяющие внешнее состояние действия приложение запросит подтвердить. Отвечай на языке пользователя, кратко и предметно.""",
     val agentSteps: Int = 8,
     val unlimitedAgent: Boolean = false,

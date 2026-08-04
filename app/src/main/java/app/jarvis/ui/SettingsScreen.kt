@@ -18,6 +18,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.jarvis.data.LlmEngine
 import app.jarvis.data.ProviderSettings
 
 @Composable fun SettingsScreen(vm: ChatViewModel, initial: ProviderSettings) {
@@ -36,6 +37,38 @@ import app.jarvis.data.ProviderSettings
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
+        }
+        item { SectionTitle("Движок", Icons.Default.Memory) }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LlmEngine.entries.forEach { engine ->
+                    FilterChip(
+                        selected = value.engine == engine,
+                        onClick = { value = value.copy(engine = engine) },
+                        label = { Text(if (engine == LlmEngine.CLOUD) "Облако" else "Локально") },
+                        leadingIcon = { Icon(if (engine == LlmEngine.CLOUD) Icons.Default.Cloud else Icons.Default.PhoneAndroid, null, Modifier.size(18.dp)) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+        if (value.engine == LlmEngine.LOCAL) {
+            item { SettingsField { OutlinedTextField(value.localModelPath, { value = value.copy(localModelPath = it.trim()) }, Modifier.fillMaxWidth(), label = { Text("Файл модели (.gguf)") }, leadingIcon = { Icon(Icons.Default.Folder, null) }, supportingText = { Text("adb push Qwen3-4B-Q4_K_M.gguf /sdcard/Download/") }, textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text("Контекст: ${value.localContextTokens} токенов", style = MaterialTheme.typography.titleSmall)
+                    Text("Больше контекст — дольше обработка промпта и больше памяти", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(value.localContextTokens.toFloat(), { value = value.copy(localContextTokens = (it.toInt() / 512) * 512) }, valueRange = 1024f..16384f)
+                }
+            }
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text("Потоков: ${if (value.localThreads == 0) "авто" else value.localThreads}", style = MaterialTheme.typography.titleSmall)
+                    Text("Больше потоков, чем больших ядер, только замедляет", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(value.localThreads.toFloat(), { value = value.copy(localThreads = it.toInt()) }, valueRange = 0f..8f, steps = 7)
+                }
+            }
+            item { ListItem(headlineContent = { Text("Инструменты ограничены грамматикой") }, supportingContent = { Text("GBNF не даёт модели выдумать имя инструмента или сломать JSON — без этого 4B-модель постоянно ошибается в вызовах") }, leadingContent = { Icon(Icons.Default.Rule, null, tint = MaterialTheme.colorScheme.primary) }) }
         }
         item { SectionTitle("AI-провайдер", Icons.Default.Cloud) }
         item { SettingsField { OutlinedTextField(value.endpoint, { value = value.copy(endpoint = it) }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, leadingIcon = { Icon(Icons.Default.Link, null) }, supportingText = { Text("OpenAI-совместимый адрес, заканчивающийся на /v1") }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }

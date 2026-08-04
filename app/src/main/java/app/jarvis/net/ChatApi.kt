@@ -47,8 +47,8 @@ sealed class ChatFailure(message: String, cause: Throwable? = null) : Exception(
 
 data class ConnectionCheck(val ok: Boolean, val message: String, val models: List<String> = emptyList())
 
-class ChatApi {
-    fun complete(settings: ProviderSettings, messages: List<ApiMessage>, toolSchemas: JSONArray): ApiAnswer {
+class ChatApi : LanguageModel {
+    override fun complete(settings: ProviderSettings, messages: List<ApiMessage>, toolSchemas: JSONArray): ApiAnswer {
         val body = JSONObject().apply {
             put("model", settings.model)
             put("messages", JSONArray().apply { messages.forEach { put(it.toJson()) } })
@@ -80,7 +80,7 @@ class ChatApi {
         }
     }
 
-    fun check(settings: ProviderSettings): ConnectionCheck = try {
+    override fun check(settings: ProviderSettings): ConnectionCheck = try {
         val raw = request(settings, "models", "GET", null)
         val data = JSONObject(raw).optJSONArray("data") ?: JSONArray()
         val models = List(data.length()) { data.getJSONObject(it).optString("id") }.filter { it.isNotBlank() }

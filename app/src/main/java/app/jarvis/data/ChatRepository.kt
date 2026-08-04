@@ -12,6 +12,7 @@ import app.jarvis.net.ApiToolCall
 import app.jarvis.net.ChatApi
 import app.jarvis.net.ChatFailure
 import app.jarvis.net.ConnectionCheck
+import app.jarvis.net.LanguageModel
 import app.jarvis.tools.ToolRegistry
 import app.jarvis.worker.RetryWorker
 import java.util.concurrent.CancellationException
@@ -32,7 +33,7 @@ class ChatRepository(
     private val settingsStore: SettingsStore,
     private val pendingStore: PendingStore,
     private val conversationStore: ConversationStore,
-    private val api: ChatApi,
+    private val api: LanguageModel,
     private val tools: ToolRegistry
 ) {
     fun settings() = settingsStore.get()

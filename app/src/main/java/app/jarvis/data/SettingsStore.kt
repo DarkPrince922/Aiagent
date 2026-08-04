@@ -9,6 +9,11 @@ class SettingsStore(context: Context) {
         endpoint = prefs.getString("endpoint", null) ?: ProviderSettings().endpoint,
         model = prefs.getString("model", null) ?: ProviderSettings().model,
         apiKey = secrets.get("provider_api_key").ifBlank { prefs.getString("api_key", "") ?: "" },
+        engine = runCatching { LlmEngine.valueOf(prefs.getString("engine", "") ?: "") }.getOrDefault(LlmEngine.CLOUD),
+        localModelPath = prefs.getString("local_model_path", null) ?: "",
+        localContextTokens = prefs.getInt("local_context", ProviderSettings().localContextTokens),
+        localMaxTokens = prefs.getInt("local_max_tokens", ProviderSettings().localMaxTokens),
+        localThreads = prefs.getInt("local_threads", 0),
         systemPrompt = prefs.getString("system", null) ?: ProviderSettings().systemPrompt,
         agentSteps = prefs.getInt("agent_steps", ProviderSettings().agentSteps),
         unlimitedAgent = prefs.getBoolean("unlimited_agent", false),
@@ -20,6 +25,11 @@ class SettingsStore(context: Context) {
         .putString("endpoint", value.endpoint.trimEnd('/'))
         .putString("model", value.model.trim())
         .remove("api_key")
+        .putString("engine", value.engine.name)
+        .putString("local_model_path", value.localModelPath.trim())
+        .putInt("local_context", value.localContextTokens.coerceIn(512, 32_768))
+        .putInt("local_max_tokens", value.localMaxTokens.coerceIn(64, 4_096))
+        .putInt("local_threads", value.localThreads.coerceIn(0, 16))
         .putString("system", value.systemPrompt)
         .putInt("agent_steps", value.agentSteps.coerceIn(1, 20))
         .putBoolean("unlimited_agent", value.unlimitedAgent)

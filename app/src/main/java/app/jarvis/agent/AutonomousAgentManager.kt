@@ -22,6 +22,7 @@ import app.jarvis.net.ApiMessage
 import app.jarvis.net.ApiToolCall
 import app.jarvis.net.ChatApi
 import app.jarvis.net.ChatFailure
+import app.jarvis.net.LanguageModel
 import app.jarvis.tools.ToolExecutionContext
 import app.jarvis.tools.ToolRegistry
 import app.jarvis.tools.ToolResult
@@ -41,7 +42,7 @@ class AutonomousAgentManager(
     private val store: AgentTaskStore,
     private val conversations: ConversationStore,
     private val profiles: SshProfileStore,
-    private val api: ChatApi,
+    private val api: LanguageModel,
     private val tools: ToolRegistry,
     private val notifications: AgentNotifications
 ) {

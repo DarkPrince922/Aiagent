@@ -12,9 +12,16 @@ android {
         applicationId = "app.jarvis"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
+        ndk {
+            // Собираем llama.cpp только под 64-битный ARM: приложение личное, целевое
+            // устройство одно, а каждая лишняя ABI — это ещё несколько минут сборки.
+            abiFilters += "arm64-v8a"
+        }
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
     }
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     signingConfigs {
         create("jarvisDebug") {
             storeFile = file("jarvis-debug.keystore")
