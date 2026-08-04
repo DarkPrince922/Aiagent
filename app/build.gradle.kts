@@ -64,4 +64,7 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // В android.jar для unit-тестов org.json — заглушка, каждый метод бросает Stub!.
+    // Подкладываем настоящую реализацию, иначе всё, что строит JSON, «падает» мимо логики.
+    testImplementation("org.json:json:20240303")
 }
