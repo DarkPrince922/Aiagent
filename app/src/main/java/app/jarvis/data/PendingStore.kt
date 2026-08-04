@@ -19,6 +19,8 @@ class PendingStore(context: Context) : SQLiteOpenHelper(context, "pending.db", n
         }
         if (oldVersion < 3) db.execSQL("ALTER TABLE pending ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
     }
+    // По умолчанию SQLiteOpenHelper бросает исключение при откате версии и роняет приложение.
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
     fun add(conversationId: String, text: String): Long = writableDatabase.insert("pending", null, ContentValues().apply {
         put("conversation_id", conversationId); put("text", text); put("created", System.currentTimeMillis()); put("status", "pending")
     })

@@ -4,6 +4,17 @@ import java.util.concurrent.atomic.AtomicLong
 
 private val messageIds = AtomicLong(System.currentTimeMillis() * 1_000)
 
+/**
+ * Продолжает нумерацию сообщений от максимума в базе.
+ *
+ * Идентификатор выводится из часов устройства, а сообщения пишутся с CONFLICT_REPLACE:
+ * после перевода часов назад новый id мог бы совпасть с существующим и молча затереть чужое
+ * сообщение. Сдвиг счётчика при старте это исключает.
+ */
+fun seedMessageIds(highWaterMark: Long) {
+    messageIds.updateAndGet { current -> maxOf(current, highWaterMark + 1) }
+}
+
 data class Message(
     val id: Long = messageIds.incrementAndGet(),
     val role: String,

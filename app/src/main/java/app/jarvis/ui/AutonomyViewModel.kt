@@ -23,9 +23,11 @@ data class AutonomyState(
     val events: List<AgentTaskEvent> = emptyList(),
     val sshProfiles: List<SshProfileChoice> = emptyList(),
     val objective: String = "",
+    val instruction: String = "",
     val selectedProfileId: String? = null,
     val autoApproveSsh: Boolean = true,
     val creating: Boolean = false,
+    val sendingInstruction: Boolean = false,
     val banner: String? = null
 ) {
     val selectedTask: AgentTask? get() = tasks.firstOrNull { it.id == selectedTaskId }
@@ -42,19 +44,22 @@ class AutonomyViewModel(
         viewModelScope.launch {
             refresh()
             while (isActive) {
-                delay(1_500)
+                // Пока агент работает, экран должен обновляться живо; в покое опрос замедляется,
+                // чтобы не будить БД каждые полторы секунды впустую.
+                delay(if (mutable.value.tasks.any { it.status.active }) ACTIVE_POLL_MS else IDLE_POLL_MS)
                 refresh(preserveBanner = true)
             }
         }
     }
 
     fun updateObjective(value: String) { mutable.value = mutable.value.copy(objective = value, banner = null) }
+    fun updateInstruction(value: String) { mutable.value = mutable.value.copy(instruction = value) }
     fun selectProfile(id: String?) { mutable.value = mutable.value.copy(selectedProfileId = id ?: NO_SSH, banner = null) }
     fun setAutoApprove(value: Boolean) { mutable.value = mutable.value.copy(autoApproveSsh = value) }
     fun dismissBanner() { mutable.value = mutable.value.copy(banner = null) }
 
     fun selectTask(id: String) {
-        mutable.value = mutable.value.copy(selectedTaskId = id)
+        mutable.value = mutable.value.copy(selectedTaskId = id, instruction = "")
         viewModelScope.launch { refresh(preserveBanner = true) }
     }
 
@@ -76,6 +81,33 @@ class AutonomyViewModel(
             }.onFailure { error ->
                 mutable.value = mutable.value.copy(creating = false, banner = error.message ?: "Не удалось запустить задачу")
             }
+        }
+    }
+
+    /** Передаёт указание работающему агенту — он учтёт его перед следующим шагом. */
+    fun sendInstruction() {
+        val snapshot = mutable.value
+        val taskId = snapshot.selectedTaskId ?: return
+        val text = snapshot.instruction.trim()
+        if (text.isBlank() || snapshot.sendingInstruction) return
+        mutable.value = snapshot.copy(sendingInstruction = true, banner = null)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { manager.addInstruction(taskId, text) } }
+                .onSuccess { status ->
+                    mutable.value = mutable.value.copy(
+                        instruction = "",
+                        sendingInstruction = false,
+                        banner = if (status == AgentTaskStatus.QUEUED) {
+                            "Указание принято; задача возобновлена"
+                        } else {
+                            "Указание принято; агент учтёт его на следующем шаге"
+                        }
+                    )
+                }
+                .onFailure { error ->
+                    mutable.value = mutable.value.copy(sendingInstruction = false, banner = error.message ?: "Не удалось передать указание")
+                }
+            refresh(preserveBanner = true)
         }
     }
 
@@ -103,7 +135,8 @@ class AutonomyViewModel(
                 ?: tasks.firstOrNull { it.status.active }?.id
                 ?: tasks.firstOrNull()?.id
             val events = current?.let(manager::events).orEmpty()
-            val choices = profiles.all().map { SshProfileChoice(it.id, it.name, "${it.username}@${it.host}:${it.port}", it.fingerprint.isNotBlank()) }
+            // summaries() не трогает Keystore: опрос экрана не должен расшифровывать SSH-секреты.
+            val choices = profiles.summaries().map { SshProfileChoice(it.id, it.name, "${it.username}@${it.host}:${it.port}", it.hostKeyTrusted) }
             Triple(tasks, current, Pair(events, choices))
         }
         val old = mutable.value
@@ -118,5 +151,9 @@ class AutonomyViewModel(
         )
     }
 
-    private companion object { const val NO_SSH = "" }
+    private companion object {
+        const val NO_SSH = ""
+        const val ACTIVE_POLL_MS = 1_500L
+        const val IDLE_POLL_MS = 6_000L
+    }
 }

@@ -18,7 +18,16 @@ class ConversationStore(context: Context) : SQLiteOpenHelper(context, "conversat
         db.execSQL("CREATE INDEX messages_conversation_created ON messages(conversation_id, created)")
     }
 
+    // Схема пока первой версии; будущие изменения добавлять сюда как ALTER TABLE по oldVersion.
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+
+    // По умолчанию SQLiteOpenHelper бросает исключение при откате версии и роняет приложение.
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+
+    @Synchronized fun maxMessageId(): Long =
+        readableDatabase.rawQuery("SELECT COALESCE(MAX(id), 0) FROM messages", null).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getLong(0) else 0L
+        }
 
     @Synchronized fun ensureConversation(): Conversation = list().firstOrNull() ?: create()
 

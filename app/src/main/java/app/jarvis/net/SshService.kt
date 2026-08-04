@@ -391,6 +391,7 @@ private fun sleepChecking(durationMs: Long) {
 internal object SshLedgerProtocol {
     private const val MARKER = "__JARVIS_LEDGER_V1__"
     private const val REMOTE_OUTPUT_BYTES = 32
+    private const val LEDGER_RETENTION_DAYS = 7
 
     fun operationKey(operationId: String): String {
         require(operationId.isNotBlank()) { "operationId пуст" }
@@ -441,6 +442,7 @@ internal object SshLedgerProtocol {
               emit_detail BASE_CREATE_FAILED
               exit 0
             fi
+            find "${'$'}base" -mindepth 1 -maxdepth 1 -type d -mtime +$LEDGER_RETENTION_DAYS -exec rm -rf {} + 2>/dev/null || true
             if mkdir "${'$'}op" 2>/dev/null; then
               if ! printf '%s' '$encodedCommand' | base64 -d > "${'$'}op/command.sh.tmp"; then
                 emit_state UNKNOWN
@@ -454,15 +456,16 @@ internal object SshLedgerProtocol {
               cat > "${'$'}op/runner.sh.tmp" <<'JARVIS_RUNNER'
             #!/bin/sh
             umask 077
-            cd "${'$'}(dirname "${'$'}0")" || exit 125
-            : > running
-            sh ./command.sh > stdout.tmp 2> stderr.tmp
+            dir=${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd) || exit 125
+            : > "${'$'}dir/running"
+            cd "${'$'}HOME" 2>/dev/null || cd / || exit 125
+            sh "${'$'}dir/command.sh" > "${'$'}dir/stdout.tmp" 2> "${'$'}dir/stderr.tmp"
             code=${'$'}?
-            mv stdout.tmp stdout
-            mv stderr.tmp stderr
-            printf '%s\n' "${'$'}code" > exit.tmp
-            mv exit.tmp exit
-            rm -f running
+            mv "${'$'}dir/stdout.tmp" "${'$'}dir/stdout"
+            mv "${'$'}dir/stderr.tmp" "${'$'}dir/stderr"
+            printf '%s\n' "${'$'}code" > "${'$'}dir/exit.tmp"
+            mv "${'$'}dir/exit.tmp" "${'$'}dir/exit"
+            rm -f "${'$'}dir/running"
             exit 0
             JARVIS_RUNNER
               mv "${'$'}op/runner.sh.tmp" "${'$'}op/runner.sh"

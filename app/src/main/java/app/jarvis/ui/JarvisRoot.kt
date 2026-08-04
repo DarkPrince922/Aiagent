@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -37,6 +38,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.jarvis.AppContainer
+import app.jarvis.data.ProviderSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private enum class Destination(val label: String) {
     CHAT("Чат"),
@@ -131,7 +135,13 @@ fun JarvisRoot(container: AppContainer) {
                         destination = Destination.CHAT
                     }
                     Destination.SERVERS -> ServersScreen(container.sshProfiles, container.ssh)
-                    Destination.SETTINGS -> SettingsScreen(vm, container.settings.get())
+                    Destination.SETTINGS -> {
+                        // Чтение настроек расшифровывает API-ключ через Keystore — не на main thread.
+                        val initial by produceState<ProviderSettings?>(null) {
+                            value = withContext(Dispatchers.IO) { container.settings.get() }
+                        }
+                        initial?.let { SettingsScreen(vm, it) }
+                    }
                 }
             }
         }

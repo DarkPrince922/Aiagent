@@ -48,6 +48,9 @@ data class AgentTaskEvent(
     val createdAt: Long
 )
 
+/** Указание, добавленное пользователем уже после старта задачи. */
+data class AgentInstruction(val id: Long, val taskId: String, val text: String, val createdAt: Long)
+
 data class AgentOperation(
     val taskId: String,
     val callId: String,
@@ -59,7 +62,7 @@ data class AgentOperation(
     val updatedAt: Long
 )
 
-class AgentTaskStore(context: Context) : SQLiteOpenHelper(context, "agent_tasks.db", null, 1) {
+class AgentTaskStore(context: Context) : SQLiteOpenHelper(context, "agent_tasks.db", null, VERSION) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE tasks (
@@ -106,6 +109,7 @@ class AgentTaskStore(context: Context) : SQLiteOpenHelper(context, "agent_tasks.
         )
         db.execSQL("CREATE INDEX task_events_task_time ON task_events(task_id, created_at)")
         db.execSQL("CREATE INDEX tasks_status_updated ON tasks(status, updated_at)")
+        createInstructions(db)
     }
 
     override fun onConfigure(db: SQLiteDatabase) {
@@ -113,7 +117,26 @@ class AgentTaskStore(context: Context) : SQLiteOpenHelper(context, "agent_tasks.
         db.setForeignKeyConstraintsEnabled(true)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createInstructions(db)
+    }
+
+    // По умолчанию SQLiteOpenHelper бросает исключение при откате версии и роняет приложение.
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+
+    private fun createInstructions(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS task_instructions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                consumed INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS task_instructions_pending ON task_instructions(task_id, consumed, id)")
+    }
 
     @Synchronized
     fun create(
@@ -239,6 +262,46 @@ class AgentTaskStore(context: Context) : SQLiteOpenHelper(context, "agent_tasks.
     }
 
     @Synchronized
+    fun addInstruction(taskId: String, text: String): Long = writableDatabase.insertOrThrow(
+        "task_instructions",
+        null,
+        ContentValues().apply {
+            put("task_id", taskId)
+            put("text", text.take(8_000))
+            put("consumed", 0)
+            put("created_at", System.currentTimeMillis())
+        }
+    )
+
+    @Synchronized
+    fun pendingInstructions(taskId: String): List<AgentInstruction> = readableDatabase.query(
+        "task_instructions",
+        arrayOf("id", "task_id", "text", "created_at"),
+        "task_id=? AND consumed=0",
+        arrayOf(taskId),
+        null,
+        null,
+        "id ASC",
+        "50"
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(
+                AgentInstruction(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getLong(3))
+            )
+        }
+    }
+
+    @Synchronized
+    fun consumeInstructions(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        val placeholders = ids.joinToString(",") { "?" }
+        writableDatabase.execSQL(
+            "UPDATE task_instructions SET consumed=1 WHERE id IN ($placeholders)",
+            ids.map { it.toString() }.toTypedArray()
+        )
+    }
+
+    @Synchronized
     fun planOperation(taskId: String, callId: String, toolName: String, arguments: String) {
         val now = System.currentTimeMillis()
         writableDatabase.insertWithOnConflict("tool_operations", null, ContentValues().apply {
@@ -333,4 +396,6 @@ class AgentTaskStore(context: Context) : SQLiteOpenHelper(context, "agent_tasks.
 
     private inline fun <reified T : Enum<T>> enumOrDefault(value: String?, fallback: T): T =
         enumValues<T>().firstOrNull { it.name == value } ?: fallback
+
+    private companion object { const val VERSION = 2 }
 }

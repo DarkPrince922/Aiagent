@@ -1,5 +1,6 @@
 package app.jarvis.net
 
+import app.jarvis.BuildConfig
 import app.jarvis.data.ProviderSettings
 import org.json.JSONArray
 import org.json.JSONException
@@ -119,7 +120,7 @@ class ChatApi {
             connection.readTimeout = 120_000
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("User-Agent", "Jarvis-Android/0.4")
+            connection.setRequestProperty("User-Agent", "Jarvis-Android/${BuildConfig.VERSION_NAME}")
             connection.setRequestProperty("X-Request-ID", requestId)
             connection.setRequestProperty("Idempotency-Key", requestId)
             if (settings.apiKey.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer ${settings.apiKey}")

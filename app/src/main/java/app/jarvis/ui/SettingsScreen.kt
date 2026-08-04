@@ -83,8 +83,9 @@ import app.jarvis.data.ProviderSettings
         item { ListItem(headlineContent = { Text("Календарь, карты, звонки и почта") }, supportingContent = { Text("Открываются в системных приложениях с вашим подтверждением") }, leadingContent = { Icon(Icons.Default.Apps, null, tint = MaterialTheme.colorScheme.primary) }) }
         item { ListItem(headlineContent = { Text("Контроль SSH-действий") }, supportingContent = { Text("В обычном чате SSH-команды требуют подтверждения. Автономная задача получает доступ только к выбранному для неё профилю.") }, leadingContent = { Icon(Icons.Default.AdminPanelSettings, null, tint = MaterialTheme.colorScheme.primary) }) }
         item { ListItem(headlineContent = { Text("Закрепление SSH-хоста") }, supportingContent = { Text("После первой успешной проверки Jarvis запоминает fingerprint и отклоняет подмену сервера") }, leadingContent = { Icon(Icons.Default.VerifiedUser, null, tint = MaterialTheme.colorScheme.primary) }) }
+        item { ListItem(headlineContent = { Text("Фоновая работа агента") }, supportingContent = { Text("Активная автономная задача продолжается при закрытом приложении и показывает уведомление с кнопками «Стоп» и «Пауза»") }, leadingContent = { Icon(Icons.Default.Notifications, null, tint = MaterialTheme.colorScheme.primary) }) }
         item { SectionTitle("О приложении", Icons.Default.Info) }
-        item { ListItem(headlineContent = { Text("Jarvis 0.4.0") }, supportingContent = { Text("Личный Android-агент • автономные задачи") }, leadingContent = { Icon(Icons.Default.AutoAwesome, null) }) }
+        item { ListItem(headlineContent = { Text("Jarvis 0.5.0") }, supportingContent = { Text("Личный Android-агент • автономные задачи") }, leadingContent = { Icon(Icons.Default.AutoAwesome, null) }) }
     }
 }
 

@@ -35,8 +35,10 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddTask
 import androidx.compose.material.icons.filled.AutoMode
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
@@ -218,6 +220,15 @@ fun AutonomyScreen(vm: AutonomyViewModel) {
         state.selectedTask?.let { task ->
             item { TaskConsole(task, pause = { vm.pause(task.id) }, resume = { vm.resume(task.id) }, stop = { vm.stop(task.id) }, delete = { vm.delete(task.id) }) }
             item {
+                InstructionComposer(
+                    value = state.instruction,
+                    status = task.status,
+                    sending = state.sendingInstruction,
+                    onValueChange = vm::updateInstruction,
+                    onSend = vm::sendInstruction
+                )
+            }
+            item {
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Terminal, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
@@ -232,6 +243,55 @@ fun AutonomyScreen(vm: AutonomyViewModel) {
             items(state.events, key = { it.id }) { event -> TaskEventRow(event) }
         }
     }
+}
+
+/**
+ * Ввод указаний уже запущенной задаче: агент подхватит текст перед следующим шагом,
+ * не теряя контекст. Для завершённой или остановленной задачи указание её возобновляет.
+ */
+@Composable
+private fun InstructionComposer(
+    value: String,
+    status: AgentTaskStatus,
+    sending: Boolean,
+    onValueChange: (String) -> Unit,
+    onSend: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Bolt, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.secondary)
+            Spacer(Modifier.width(8.dp))
+            Text("ВМЕШАТЬСЯ ПО ХОДУ", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Уточнение или новое требование") },
+            placeholder = { Text("Не трогай продовую базу, сначала сделай дамп") },
+            minLines = 2,
+            maxLines = 5,
+            shape = RoundedCornerShape(6.dp),
+            trailingIcon = {
+                IconButton(onClick = onSend, enabled = value.isNotBlank() && !sending) {
+                    if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.AutoMirrored.Filled.Send, "Передать агенту")
+                }
+            }
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (status.active) {
+                "Агент учтёт указание перед следующим шагом и продолжит без остановки."
+            } else {
+                "Задача не активна: указание вернёт её в работу с сохранённого checkpoint."
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 }
 
 @Composable
@@ -305,8 +365,10 @@ private fun TaskConsole(task: AgentTask, pause: () -> Unit, resume: () -> Unit, 
                                     IconButton(onClick = pause) { Icon(Icons.Default.Pause, "Пауза") }
                                     FilledIconButton(onClick = stop, colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)) { Icon(Icons.Default.PowerSettingsNew, "Аварийная остановка") }
                                 }
-                                status == AgentTaskStatus.PAUSED || status == AgentTaskStatus.FAILED -> FilledIconButton(onClick = resume) { Icon(Icons.Default.PlayArrow, "Продолжить") }
-                                else -> IconButton(onClick = delete) { Icon(Icons.Default.DeleteOutline, "Удалить задачу") }
+                                else -> {
+                                    FilledIconButton(onClick = resume) { Icon(Icons.Default.PlayArrow, "Продолжить") }
+                                    IconButton(onClick = delete) { Icon(Icons.Default.DeleteOutline, "Удалить задачу") }
+                                }
                             }
                         }
                     }

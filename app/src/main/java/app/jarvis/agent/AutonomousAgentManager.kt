@@ -25,6 +25,7 @@ import app.jarvis.net.ChatFailure
 import app.jarvis.tools.ToolExecutionContext
 import app.jarvis.tools.ToolRegistry
 import app.jarvis.tools.ToolResult
+import app.jarvis.worker.AgentNotifications
 import app.jarvis.worker.AutonomousAgentWorker
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,12 +42,14 @@ class AutonomousAgentManager(
     private val conversations: ConversationStore,
     private val profiles: SshProfileStore,
     private val api: ChatApi,
-    private val tools: ToolRegistry
+    private val tools: ToolRegistry,
+    private val notifications: AgentNotifications
 ) {
     private val workManager = WorkManager.getInstance(context)
 
     fun tasks(): List<AgentTask> = store.all()
     fun events(taskId: String): List<AgentTaskEvent> = store.events(taskId)
+    fun task(id: String): AgentTask? = store.get(id)
 
     fun start(objective: String, sshProfileId: String?, autoApproveSsh: Boolean = true): AgentTask {
         val goal = objective.trim()
@@ -72,11 +75,11 @@ class AutonomousAgentManager(
         store.setStatus(id, AgentTaskStatus.PAUSED, "Приостановлено пользователем")
         store.addEvent(id, AgentEventKind.SYSTEM, "Задача на паузе")
         workManager.cancelUniqueWork(workName(id))
+        notifications.cancelProgress(id)
     }
 
     fun resume(id: String) {
-        val task = store.get(id) ?: return
-        if (task.status == AgentTaskStatus.COMPLETED || task.status == AgentTaskStatus.STOPPED) return
+        store.get(id) ?: return
         store.setStatus(id, AgentTaskStatus.QUEUED, "Возобновление")
         store.addEvent(id, AgentEventKind.SYSTEM, "Задача возобновлена")
         enqueue(id, ExistingWorkPolicy.REPLACE)
@@ -84,15 +87,37 @@ class AutonomousAgentManager(
 
     fun stop(id: String) {
         val task = store.get(id) ?: return
-        if (task.status == AgentTaskStatus.COMPLETED || task.status == AgentTaskStatus.STOPPED) return
+        if (task.status == AgentTaskStatus.STOPPED) return
         store.setStatus(id, AgentTaskStatus.STOPPED, "Остановлено пользователем")
         store.addEvent(id, AgentEventKind.WARNING, "Задача остановлена", "Новые шаги не будут запущены. Уже отправленная на сервер команда может завершиться удалённо.")
         workManager.cancelUniqueWork(workName(id))
+        announce(task, AgentTaskStatus.STOPPED, "Агент остановлен на шаге ${task.step}.")
     }
 
     fun delete(id: String) {
         workManager.cancelUniqueWork(workName(id))
+        notifications.cancelProgress(id)
         store.delete(id)
+    }
+
+    /**
+     * Добавляет указание работающей задаче.
+     *
+     * Агент подхватит его перед следующим обращением к модели — вмешаться можно, не останавливая
+     * работу и не теряя контекст. Если задача уже не активна, она возвращается в очередь:
+     * новое указание — это явное желание продолжить.
+     */
+    fun addInstruction(id: String, text: String): AgentTaskStatus {
+        val task = store.get(id) ?: error("Задача не найдена")
+        val instruction = text.trim()
+        require(instruction.isNotBlank()) { "Опишите, что изменить" }
+        require(instruction.length <= 8_000) { "Указание слишком длинное; сократите до 8000 символов" }
+        store.addInstruction(id, instruction)
+        store.addEvent(id, AgentEventKind.SYSTEM, "Указание от пользователя", instruction.take(2_000))
+        if (task.status.active) return task.status
+        store.setStatus(id, AgentTaskStatus.QUEUED, "Возобновление с новым указанием")
+        enqueue(id, ExistingWorkPolicy.REPLACE)
+        return AgentTaskStatus.QUEUED
     }
 
     fun resumeActive() {
@@ -125,6 +150,7 @@ class AutonomousAgentManager(
                     }
                 } else {
                     val currentSettings = settings.get().copy(toolsEnabled = true, unlimitedAgent = true)
+                    messages = drainInstructions(taskId, messages, step)
                     val compacted = compactContext(messages)
                     if (compacted != messages) {
                         messages = compacted
@@ -155,6 +181,7 @@ class AutonomousAgentManager(
                     }
                 }
                 task = store.get(taskId) ?: return AutonomousRunResult.DONE
+                notifications.updateProgress(task)
                 if (System.currentTimeMillis() - started >= MAX_RUN_MILLIS) return AutonomousRunResult.CONTINUE
             }
             AutonomousRunResult.CONTINUE
@@ -174,6 +201,7 @@ class AutonomousAgentManager(
                 val status = if (error.status == 401 || error.status == 403) AgentTaskStatus.PAUSED else AgentTaskStatus.FAILED
                 store.setStatus(taskId, status, "Требуется проверка API", error.message)
                 store.addEvent(taskId, AgentEventKind.ERROR, "Ошибка API ${error.status}", error.serverMessage)
+                announce(store.get(taskId), status, "Ошибка API ${error.status}: ${error.serverMessage}")
                 AutonomousRunResult.DONE
             }
         } catch (error: Exception) {
@@ -181,8 +209,35 @@ class AutonomousAgentManager(
             val message = error.message ?: error.javaClass.simpleName
             store.setStatus(taskId, AgentTaskStatus.FAILED, "Агент остановлен ошибкой", message)
             store.addEvent(taskId, AgentEventKind.ERROR, "Невосстановимая ошибка", message)
+            announce(store.get(taskId), AgentTaskStatus.FAILED, message)
             AutonomousRunResult.DONE
         }
+    }
+
+    /**
+     * Переносит накопленные указания в диалог перед следующим обращением к модели.
+     *
+     * Вызывается только когда все tool_calls уже закрыты: вставлять сообщение пользователя
+     * между вызовом инструмента и его результатом API не разрешает.
+     */
+    private fun drainInstructions(taskId: String, messages: List<ApiMessage>, step: Int): List<ApiMessage> {
+        val pending = store.pendingInstructions(taskId)
+        if (pending.isEmpty()) return messages
+        val text = pending.joinToString("\n\n") { it.text }
+        val updated = messages + ApiMessage(
+            "user",
+            "НОВОЕ УКАЗАНИЕ ПОЛЬЗОВАТЕЛЯ (имеет приоритет над прежними инструкциями, цель задачи скорректирована):\n$text"
+        )
+        store.consumeInstructions(pending.map { it.id })
+        store.addEvent(taskId, AgentEventKind.SYSTEM, "Указание учтено", text.take(2_000))
+        store.updateCheckpoint(taskId, encodeMessages(updated), step, "Учитываю новое указание")
+        return updated
+    }
+
+    private fun announce(task: AgentTask?, status: AgentTaskStatus, text: String) {
+        val id = task?.id ?: return
+        notifications.cancelProgress(id)
+        notifications.notifyFinished(id, task.title, text, status)
     }
 
     private fun executeCall(
@@ -223,6 +278,7 @@ class AutonomousAgentManager(
             val updated = appendToolResult(messages, call.id, "TASK_FINISHED")
             store.complete(task.id, finalText, encodeMessages(updated), step)
             store.addEvent(task.id, AgentEventKind.SUCCESS, "Цель достигнута", finalText)
+            announce(task, AgentTaskStatus.COMPLETED, finalText)
             task.conversationId?.let { conversationId ->
                 if (conversations.messages(conversationId).none { it.detail == "agent-task:${task.id}" }) {
                     conversations.saveMessage(conversationId, Message(role = "assistant", text = finalText, detail = "agent-task:${task.id}"))
@@ -266,6 +322,7 @@ class AutonomousAgentManager(
             store.updateOperation(task.id, call.id, AgentOperationStatus.FAILED, result.content)
             store.setStatus(task.id, AgentTaskStatus.PAUSED, "Нужно исправить SSH-профиль", result.content)
             store.addEvent(task.id, AgentEventKind.ERROR, "SSH-доступ приостановлен", summarizeResult(result.content))
+            announce(task, AgentTaskStatus.PAUSED, summarizeResult(result.content))
             return CallOutcome.StopWorker
         }
         val operationStatus = when {

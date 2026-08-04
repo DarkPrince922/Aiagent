@@ -21,18 +21,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import app.jarvis.data.SshProfile
 import app.jarvis.data.SshProfileStore
+import app.jarvis.data.SshProfileSummary
 import app.jarvis.net.SshService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable fun ServersScreen(store: SshProfileStore, ssh: SshService) {
-    var profiles by remember { mutableStateOf(store.all()) }
+    // Список показывает только публичные поля: расшифровка Keystore происходит лишь при
+    // редактировании и проверке конкретного профиля, а не на каждой рекомпозиции.
+    var profiles by remember { mutableStateOf(emptyList<SshProfileSummary>()) }
     var editing by remember { mutableStateOf<SshProfile?>(null) }
-    var deleteCandidate by remember { mutableStateOf<SshProfile?>(null) }
+    var deleteCandidate by remember { mutableStateOf<SshProfileSummary?>(null) }
     var testingId by remember { mutableStateOf<String?>(null) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    suspend fun reload() { profiles = withContext(Dispatchers.IO) { store.summaries() } }
+    LaunchedEffect(Unit) { reload() }
     Scaffold(containerColor = MaterialTheme.colorScheme.background, snackbarHost = { SnackbarHost(snackbar) }, floatingActionButton = { FloatingActionButton(onClick = { editing = SshProfile() }, shape = RoundedCornerShape(8.dp), containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.primary) { Icon(Icons.Default.Add, "Добавить сервер") } }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding()) {
             Surface(color = MaterialTheme.colorScheme.surface) {
@@ -53,7 +58,7 @@ import kotlinx.coroutines.withContext
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)), modifier = Modifier.size(40.dp)) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Terminal, null, tint = MaterialTheme.colorScheme.secondary) } }
                                 Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(profile.name, style = MaterialTheme.typography.titleMedium); Text("${profile.username}@${profile.host}:${profile.port}", style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                IconButton(onClick = { editing = profile }) { Icon(Icons.Default.Edit, "Изменить") }
+                                IconButton(onClick = { scope.launch { editing = withContext(Dispatchers.IO) { store.find(profile.id) } } }) { Icon(Icons.Default.Edit, "Изменить") }
                                 IconButton(onClick = { deleteCandidate = profile }) { Icon(Icons.Default.DeleteOutline, "Удалить") }
                             }
                             Spacer(Modifier.height(10.dp)); HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant); Spacer(Modifier.height(10.dp))
@@ -63,8 +68,13 @@ import kotlinx.coroutines.withContext
                                 TextButton(enabled = testingId == null, onClick = {
                                     testingId = profile.id
                                     scope.launch {
-                                        val result = withContext(Dispatchers.IO) { runCatching { ssh.execute(profile, "printf JARVIS_OK") } }
-                                        testingId = null; profiles = store.all(); snackbar.showSnackbar(result.fold({ "SSH подключение работает" }, { "SSH: ${it.message}" }))
+                                        val result = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                val full = store.find(profile.id) ?: error("Профиль не найден")
+                                                ssh.execute(full, "printf JARVIS_OK")
+                                            }
+                                        }
+                                        testingId = null; reload(); snackbar.showSnackbar(result.fold({ "SSH подключение работает" }, { "SSH: ${it.message}" }))
                                     }
                                 }) { if (testingId == profile.id) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Default.NetworkCheck, null); Spacer(Modifier.width(5.dp)); Text("Проверить") }
                             }
@@ -75,9 +85,13 @@ import kotlinx.coroutines.withContext
         }
     }
     editing?.let { profile -> ProfileDialog(profile, close = { editing = null }, save = { value ->
-        runCatching { store.save(value) }.onSuccess { profiles = store.all(); editing = null }.onFailure { scope.launch { snackbar.showSnackbar(it.message ?: "Не удалось сохранить") } }
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { store.save(value) } }
+                .onSuccess { reload(); editing = null }
+                .onFailure { snackbar.showSnackbar(it.message ?: "Не удалось сохранить") }
+        }
     }) }
-    deleteCandidate?.let { profile -> AlertDialog(onDismissRequest = { deleteCandidate = null }, icon = { Icon(Icons.Default.DeleteOutline, null) }, title = { Text("Удалить ${profile.name}?") }, text = { Text("Профиль и сохранённые SSH-секреты будут удалены с устройства.") }, dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("Отмена") } }, confirmButton = { Button(onClick = { store.delete(profile.id); profiles = store.all(); deleteCandidate = null }) { Text("Удалить") } }) }
+    deleteCandidate?.let { profile -> AlertDialog(onDismissRequest = { deleteCandidate = null }, icon = { Icon(Icons.Default.DeleteOutline, null) }, title = { Text("Удалить ${profile.name}?") }, text = { Text("Профиль и сохранённые SSH-секреты будут удалены с устройства.") }, dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("Отмена") } }, confirmButton = { Button(onClick = { scope.launch { withContext(Dispatchers.IO) { store.delete(profile.id) }; reload(); deleteCandidate = null } }) { Text("Удалить") } }) }
 }
 
 @Composable private fun ProfileDialog(initial: SshProfile, close: () -> Unit, save: (SshProfile) -> Unit) {

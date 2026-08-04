@@ -17,6 +17,7 @@ import android.provider.Settings
 import app.jarvis.data.NoteStore
 import app.jarvis.data.SshProfileStore
 import app.jarvis.net.SshService
+import app.jarvis.net.UrlPolicy
 import app.jarvis.net.WebService
 import app.jarvis.net.isRetryableSshConnectFailure
 import com.jcraft.jsch.JSchException
@@ -113,8 +114,8 @@ class ToolRegistry(
         }
     }
 
-    fun sshContext(): String = profiles.all().joinToString("\n") {
-        "profile_id=${it.id}; name=${it.name}; target=${it.username}@${it.host}:${it.port}; fingerprint=${it.fingerprint.ifBlank { "NOT_TRUSTED" }}"
+    fun sshContext(): String = profiles.summaries().joinToString("\n") {
+        "profile_id=${it.id}; name=${it.name}; target=${it.username}@${it.host}:${it.port}; host_key_trusted=${it.hostKeyTrusted}"
     }.ifBlank { "SSH profiles: none" }
 
     fun execute(name: String, args: JSONObject, confirmed: Boolean = false, execution: ToolExecutionContext = ToolExecutionContext()): ToolResult = try {
@@ -128,8 +129,8 @@ class ToolRegistry(
                 }).put("diagnostics", JSONArray(outcome.diagnostics)).toString())
             }
             "web_fetch" -> done(web.fetch(args.string("url")))
-            "list_ssh_profiles" -> done(JSONArray().apply { profiles.all().forEach { profile ->
-                put(JSONObject().put("id", profile.id).put("name", profile.name).put("target", "${profile.username}@${profile.host}:${profile.port}").put("trusted", profile.fingerprint.isNotBlank()))
+            "list_ssh_profiles" -> done(JSONArray().apply { profiles.summaries().forEach { profile ->
+                put(JSONObject().put("id", profile.id).put("name", profile.name).put("target", "${profile.username}@${profile.host}:${profile.port}").put("trusted", profile.hostKeyTrusted))
             } }.toString())
             "ssh_exec" -> {
                 val profile = profiles.find(args.string("profile")) ?: error("SSH-профиль не найден")
@@ -181,8 +182,18 @@ class ToolRegistry(
         ToolResult(
             "Ошибка инструмента $name: ${error.message ?: error.javaClass.simpleName}",
             isError = true,
-            retryable = error is IOException || (error is JSchException && isRetryableSshConnectFailure(error.message.orEmpty()))
+            retryable = isRetryable(name, error)
         )
+    }
+
+    /**
+     * Retryable означает «подождать сеть и повторить весь шаг», из-за чего автономная задача
+     * встаёт в WAITING_NETWORK. Для веб-инструментов это вредно: недоступный сайт — не потеря
+     * связи, и агент должен просто взять другой источник. Ждать имеет смысл только на SSH.
+     */
+    private fun isRetryable(name: String, error: Exception): Boolean = when (name) {
+        "web_search", "web_fetch", "http_request", "dns_lookup" -> false
+        else -> error is IOException || (error is JSchException && isRetryableSshConnectFailure(error.message.orEmpty()))
     }
 
     private fun done(content: String) = ToolResult(content.take(64_000))
@@ -200,7 +211,8 @@ class ToolRegistry(
             error("Android отклонил действие: ${error.message ?: "нет разрешения"}")
         }
     }
-    private fun publicUri(raw: String): Uri { val uri = Uri.parse(raw); require(uri.scheme == "https" && !uri.host.isNullOrBlank()) { "Разрешены только HTTPS-ссылки" }; return uri }
+    /** Единая политика: HTTPS, без credentials в URL и без адресов внутренней сети. */
+    private fun publicUri(raw: String): Uri = Uri.parse(UrlPolicy.requirePublicHttps(raw).toString())
 
     private fun deviceStatus(): String {
         val battery = context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -212,7 +224,7 @@ class ToolRegistry(
     }
 
     private fun simpleHttp(args: JSONObject): String {
-        val uri = publicUri(args.string("url"))
+        val uri = UrlPolicy.requirePublicHttps(args.string("url"))
         val method = args.optString("method", "GET").uppercase()
         require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Метод не поддерживается" }
         val connection = java.net.URL(uri.toString()).openConnection() as java.net.HttpURLConnection

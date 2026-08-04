@@ -13,6 +13,7 @@ import app.jarvis.net.ChatApi
 import app.jarvis.net.SshService
 import app.jarvis.net.WebService
 import app.jarvis.tools.ToolRegistry
+import app.jarvis.worker.AgentNotifications
 
 class AppContainer(context: Context) {
     val settings = SettingsStore(context)
@@ -25,6 +26,7 @@ class AppContainer(context: Context) {
     val api = ChatApi()
     val ssh = SshService(sshProfiles)
     val tools = ToolRegistry(context, notes, sshProfiles, web, ssh)
+    val notifications = AgentNotifications(context)
     val repository = ChatRepository(context, settings, pending, conversations, api, tools)
-    val autonomous = AutonomousAgentManager(context, settings, agentTasks, conversations, sshProfiles, api, tools)
+    val autonomous = AutonomousAgentManager(context, settings, agentTasks, conversations, sshProfiles, api, tools, notifications)
 }
