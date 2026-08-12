@@ -58,7 +58,7 @@ fun JarvisRoot(container: AppContainer) {
     val vm: ChatViewModel = viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(container.repository, container.workspace) as T
+            ChatViewModel(container.repository, container.workspace, container.autonomous) as T
     })
     val autonomyVm: AutonomyViewModel = viewModel(key = "autonomy", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -132,7 +132,8 @@ fun JarvisRoot(container: AppContainer) {
                     Destination.CHAT -> ChatScreen(
                         vm,
                         openSettings = { destination = Destination.SETTINGS },
-                        openTools = { destination = Destination.TOOLS }
+                        openTools = { destination = Destination.TOOLS },
+                        openAgent = { destination = Destination.AUTONOMY }
                     )
                     Destination.AUTONOMY -> AutonomyScreen(autonomyVm)
                     Destination.TOOLS -> ToolsScreen(vm.tools) { prompt ->

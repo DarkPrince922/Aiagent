@@ -57,7 +57,8 @@ class ChatRepository(
         shouldContinue: () -> Boolean = { true },
         allowUnlimited: Boolean = true,
         onProgress: (String) -> Unit = {},
-        onInterim: (String) -> Unit = {}
+        onInterim: (String) -> Unit = {},
+        onSummary: (String) -> Unit = {}
     ): Result<AgentReply> = runCatching {
         val saved = settingsStore.get()
         val limited = if (allowUnlimited) saved else saved.copy(unlimitedAgent = false, agentSteps = 10)
@@ -79,7 +80,7 @@ class ChatRepository(
             }))
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
-        runAgent(settings, messages, shouldContinue, onProgress, onInterim)
+        runAgent(settings, messages, shouldContinue, onProgress, onInterim, onSummary)
     }
 
     fun confirm(action: PendingAgentAction, approved: Boolean, shouldContinue: () -> Boolean = { true }): Result<AgentReply> = runCatching {
@@ -145,13 +146,16 @@ class ChatRepository(
         initial: List<ApiMessage>,
         shouldContinue: () -> Boolean,
         onProgress: (String) -> Unit = {},
-        onInterim: (String) -> Unit = {}
+        onInterim: (String) -> Unit = {},
+        onSummary: (String) -> Unit = {}
     ): AgentReply {
         var messages = initial
         var fallbackNotice: String? = null
         var step = 0
         var lastCallSignature = ""
         var repeatedCalls = 0
+        var toolsUsed = 0
+        var assistantOutputs = 0
         while (settings.unlimitedAgent || step < settings.agentSteps.coerceIn(1, 20)) {
             if (!shouldContinue()) throw CancellationException("Остановлено пользователем")
             step++
@@ -167,7 +171,12 @@ class ChatRepository(
                 api.complete(settings.copy(toolsEnabled = false), messages, org.json.JSONArray())
             }
             messages = messages + answer.rawMessage
-            if (answer.toolCalls.isEmpty()) return AgentReply(answer.text.ifBlank { "ИИ вернул пустой ответ" }, notice = fallbackNotice)
+            if (answer.text.isNotBlank()) assistantOutputs++
+            if (answer.toolCalls.isEmpty()) {
+                val finalText = answer.text.ifBlank { "ИИ вернул пустой ответ" }
+                summarize(settings, messages, toolsUsed, assistantOutputs, onProgress, onSummary)
+                return AgentReply(finalText, notice = fallbackNotice)
+            }
             val signature = answer.toolCalls.joinToString("|") { "${it.name}:${it.arguments}" }
             repeatedCalls = if (signature == lastCallSignature) repeatedCalls + 1 else 0
             lastCallSignature = signature
@@ -180,6 +189,7 @@ class ChatRepository(
             if (answer.text.isNotBlank()) onInterim(answer.text)
             answer.toolCalls.forEachIndexed { index, call ->
                 onProgress("Инструмент: ${call.name}")
+                toolsUsed++
                 val result = tools.execute(call.name, call.arguments)
                 if (result.needsConfirmation) {
                     return AgentReply("Нужно ваше подтверждение", PendingAgentAction(result.prompt, messages, answer.toolCalls.drop(index), settings), fallbackNotice)
@@ -209,11 +219,43 @@ class ChatRepository(
         return messages
     }
 
+    /**
+     * Отдельное резюме поверх ответа.
+     *
+     * Нужно там, где ответов за ход было несколько или выполнялись действия: итог
+     * собирает их в одно сообщение, которое дублируется в чат и не теряется в переписке.
+     */
+    private fun summarize(
+        settings: ProviderSettings,
+        messages: List<ApiMessage>,
+        toolsUsed: Int,
+        assistantOutputs: Int,
+        onProgress: (String) -> Unit,
+        onSummary: (String) -> Unit
+    ) {
+        if (!settings.summarizeAnswers) return
+        // Для короткой реплики без действий отдельный итог только дублировал бы ответ.
+        if (toolsUsed == 0 && assistantOutputs < 2) return
+        onProgress("Готовлю итог")
+        runCatching {
+            val request = compactContext(messages) + ApiMessage("user", SUMMARY_PROMPT)
+            api.complete(settings.copy(toolsEnabled = false), request, org.json.JSONArray()).text
+        }.onSuccess { text ->
+            if (text.isNotBlank()) onSummary(text.trim())
+        }.onFailure {
+            // Итог — надстройка: его потеря не должна ронять уже полученный ответ.
+            onSummary("Итог сформировать не удалось: ${it.message ?: "ошибка запроса"}")
+        }
+    }
+
     private fun workspaceHint(): String =
         "файлы, которыми обменялись с пользователем; список — list_files, чтение — read_file, создание — write_file, отправка пользователю — send_file"
 
     private companion object {
         const val MAX_LOCAL_STEPS = 2
+        const val SUMMARY_PROMPT =
+            "Подведи итог этого хода отдельным сообщением: что было сделано, что получилось и что осталось. " +
+                "Не вызывай инструменты, не повторяй длинные выдержки, уложись в 5 пунктов."
         const val ANSWER_FIRST_PROTOCOL =
             "ПОРЯДОК РАБОТЫ: сначала прочитай запрос и ответь на него обычным текстом — что ты понял и что " +
                 "намерен сделать. Вызовы инструментов помещай в тот же ответ, но только после этого текста. " +

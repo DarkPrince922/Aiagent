@@ -204,6 +204,7 @@ class AutonomousAgentManager(
                 val status = if (error.status == 401 || error.status == 403) AgentTaskStatus.PAUSED else AgentTaskStatus.FAILED
                 store.setStatus(taskId, status, "Требуется проверка API", error.message)
                 store.addEvent(taskId, AgentEventKind.ERROR, "Ошибка API ${error.status}", error.serverMessage)
+                store.get(taskId)?.let { mirrorToChat(it, "Ошибка API ${error.status}: ${error.serverMessage}", "agent-error:${it.id}-${it.step}") }
                 announce(store.get(taskId), status, "Ошибка API ${error.status}: ${error.serverMessage}")
                 AutonomousRunResult.DONE
             }
@@ -237,6 +238,14 @@ class AutonomousAgentManager(
         return updated
     }
 
+    /** Пишет сообщение в чат задачи один раз: ключ detail защищает от дублей при повторах. */
+    private fun mirrorToChat(task: AgentTask, text: String, key: String) {
+        val conversationId = task.conversationId ?: return
+        if (text.isBlank()) return
+        if (conversations.messages(conversationId).any { it.detail == key }) return
+        conversations.saveMessage(conversationId, Message(role = "assistant", text = text, detail = key))
+    }
+
     private fun announce(task: AgentTask?, status: AgentTaskStatus, text: String) {
         val id = task?.id ?: return
         notifications.cancelProgress(id)
@@ -268,6 +277,8 @@ class AutonomousAgentManager(
             if (existing?.status != AgentOperationStatus.SUCCEEDED) {
                 store.addEventOnce(task.id, AgentEventKind.PROGRESS, title, detail)
                 store.updateOperation(task.id, call.id, AgentOperationStatus.SUCCEEDED, "PROGRESS_RECORDED")
+                // Каждое резюме дублируется в чат: журнал задачи легко пропустить.
+                mirrorToChat(task, if (detail.isBlank()) title else "$title\n$detail", "agent-progress:${call.id}")
             }
             val updated = appendToolResult(messages, call.id, existing?.result ?: "PROGRESS_RECORDED")
             store.updateCheckpoint(task.id, encodeMessages(updated), step, title)
@@ -282,11 +293,7 @@ class AutonomousAgentManager(
             store.complete(task.id, finalText, encodeMessages(updated), step)
             store.addEvent(task.id, AgentEventKind.SUCCESS, "Цель достигнута", finalText)
             announce(task, AgentTaskStatus.COMPLETED, finalText)
-            task.conversationId?.let { conversationId ->
-                if (conversations.messages(conversationId).none { it.detail == "agent-task:${task.id}" }) {
-                    conversations.saveMessage(conversationId, Message(role = "assistant", text = finalText, detail = "agent-task:${task.id}"))
-                }
-            }
+            mirrorToChat(task, finalText, "agent-task:${task.id}")
             return CallOutcome.TaskFinished
         }
 

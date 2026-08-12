@@ -52,7 +52,7 @@ import java.util.Date
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun ChatScreen(vm: ChatViewModel, openSettings: () -> Unit, openTools: () -> Unit) {
+@Composable fun ChatScreen(vm: ChatViewModel, openSettings: () -> Unit, openTools: () -> Unit, openAgent: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     var historyOpen by remember { mutableStateOf(false) }
     var deleteCandidate by remember { mutableStateOf<Conversation?>(null) }
@@ -111,6 +111,7 @@ import java.util.Locale
             draft = state.draft,
             attachments = state.attachments,
             onAttach = vm::attach,
+            onDelegate = { vm.startAutonomous(); openAgent() },
             onRemoveAttachment = vm::removeAttachment,
             enabled = !state.sending && state.pending == null,
             sending = state.sending,
@@ -193,6 +194,19 @@ import java.util.Locale
         if (!user) { Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)), modifier = Modifier.size(30.dp)) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Terminal, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.secondary) } }; Spacer(Modifier.width(8.dp)) }
         Surface(shape = RoundedCornerShape(8.dp), color = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, if (user) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(.86f)) {
             Column(Modifier.padding(12.dp)) {
+                // Итоговые сообщения помечаются, чтобы не теряться среди промежуточных ответов.
+                if (message.detail == "summary" || message.detail?.startsWith("agent-") == true) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Summarize, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            if (message.detail == "summary") "ИТОГ" else "АВТОНОМНАЯ ЗАДАЧА",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
                 SelectionContainer { Text(message.text, style = if (message.text.contains("```")) MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge) }
                 when (message.state) {
                     DeliveryState.SENDING -> MessageStatus(Icons.Default.Sync, "Отправка")
@@ -237,6 +251,7 @@ import java.util.Locale
     draft: String,
     attachments: List<String>,
     onAttach: (android.content.ContentResolver, android.net.Uri) -> Unit,
+    onDelegate: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     enabled: Boolean,
     sending: Boolean,
@@ -253,6 +268,17 @@ import java.util.Locale
     Surface(color = MaterialTheme.colorScheme.surface) {
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            // Длинный запрос обычно и есть задача для фонового агента — предлагаем передать её,
+            // не заставляя переходить на другую вкладку и набирать текст заново.
+            if (draft.trim().length >= DELEGATE_THRESHOLD && !sending) {
+                Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 8.dp)) {
+                    AssistChip(
+                        onClick = onDelegate,
+                        label = { Text("Запустить как автономную задачу") },
+                        leadingIcon = { Icon(Icons.Default.RocketLaunch, null, Modifier.size(18.dp)) }
+                    )
+                }
+            }
             if (attachments.isNotEmpty()) {
                 Row(
                     Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 8.dp),
@@ -295,3 +321,5 @@ import java.util.Locale
 }
 
 @Composable private fun statusColor(status: ApiStatus): Color = when (status) { ApiStatus.ONLINE -> MaterialTheme.colorScheme.primary; ApiStatus.ERROR, ApiStatus.OFFLINE -> MaterialTheme.colorScheme.error; else -> MaterialTheme.colorScheme.onSurfaceVariant }
+
+private const val DELEGATE_THRESHOLD = 8

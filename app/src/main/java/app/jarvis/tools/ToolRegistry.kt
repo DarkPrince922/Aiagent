@@ -61,6 +61,12 @@ class ToolRegistry(
     private val ssh: SshService,
     private val workspace: WorkspaceStore
 ) {
+    /**
+     * Запуск автономной задачи. Устанавливается контейнером после сборки менеджера:
+     * AutonomousAgentManager сам зависит от реестра инструментов, поэтому передать его
+     * в конструктор нельзя — получилась бы циклическая зависимость.
+     */
+    var autonomousLauncher: ((objective: String, sshProfileId: String?) -> String)? = null
     val catalog = listOf(
         ToolInfo("web_search", "Поиск в интернете", "Ищет актуальные источники", "Интернет", "travel_explore", ToolRisk.READ_ONLY),
         ToolInfo("web_fetch", "Чтение страницы", "Извлекает текст HTTPS-страницы", "Интернет", "language", ToolRisk.READ_ONLY),
@@ -220,6 +226,16 @@ class ToolRegistry(
                         "Файл от Jarvis"
                     )
                 )
+            }
+            // Рекурсивный запуск задач из самой задачи запрещён: это прямой путь к лавине.
+            "start_autonomous_task" -> if (execution.autonomous) {
+                done("Автономная задача не может запускать другие автономные задачи")
+            } else {
+                val objective = args.string("objective")
+                val profile = args.optString("ssh_profile").takeIf { it.isNotBlank() }
+                dangerous(confirmed, "Запустить автономную задачу: ${objective.take(120)}?") {
+                    (autonomousLauncher ?: error("Автономный режим недоступен")).invoke(objective, profile)
+                }
             }
             "record_progress", "finish_task" -> done("Этот инструмент доступен только координатору автономной задачи")
             else -> done("Ошибка: неизвестный инструмент $name")

@@ -42,7 +42,9 @@ data class ProviderSettings(
     val unlimitedAgent: Boolean = false,
     val toolsEnabled: Boolean = true,
     /** Сначала ответить пользователю текстом, и только потом вызывать инструменты. */
-    val answerBeforeTools: Boolean = true
+    val answerBeforeTools: Boolean = true,
+    /** Отдельным сообщением подводить итог, когда в ходе ответа выполнялись действия. */
+    val summarizeAnswers: Boolean = true
 )
 
 /**

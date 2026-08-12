@@ -40,4 +40,12 @@ class AppContainer(context: Context) {
     val models = LanguageModelRouter(api, localModel)
     val repository = ChatRepository(context, settings, pending, conversations, models, tools)
     val autonomous = AutonomousAgentManager(context, settings, agentTasks, conversations, sshProfiles, models, tools, notifications)
+
+    init {
+        // Позднее связывание: менеджер сам зависит от реестра инструментов.
+        tools.autonomousLauncher = { objective, sshProfileId ->
+            val task = autonomous.start(objective, sshProfileId, autoApproveSsh = sshProfileId != null)
+            "Автономная задача запущена: ${task.title}. Следите на вкладке «Агент»; результат придёт уведомлением."
+        }
+    }
 }

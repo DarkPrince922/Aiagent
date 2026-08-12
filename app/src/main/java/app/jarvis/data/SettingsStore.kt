@@ -18,7 +18,8 @@ class SettingsStore(context: Context) {
         agentSteps = prefs.getInt("agent_steps", ProviderSettings().agentSteps),
         unlimitedAgent = prefs.getBoolean("unlimited_agent", false),
         toolsEnabled = prefs.getBoolean("tools_enabled", true),
-        answerBeforeTools = prefs.getBoolean("answer_before_tools", true)
+        answerBeforeTools = prefs.getBoolean("answer_before_tools", true),
+        summarizeAnswers = prefs.getBoolean("summarize_answers", true)
     )
     fun save(value: ProviderSettings) {
         secrets.put("provider_api_key", value.apiKey.trim())
@@ -36,6 +37,7 @@ class SettingsStore(context: Context) {
         .putBoolean("unlimited_agent", value.unlimitedAgent)
         .putBoolean("tools_enabled", value.toolsEnabled)
         .putBoolean("answer_before_tools", value.answerBeforeTools)
+        .putBoolean("summarize_answers", value.summarizeAnswers)
         .apply()
     }
 }

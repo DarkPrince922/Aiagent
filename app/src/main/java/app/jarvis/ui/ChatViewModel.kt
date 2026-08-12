@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.jarvis.data.*
 import android.content.ContentResolver
 import android.net.Uri
+import app.jarvis.agent.AutonomousAgentManager
 import app.jarvis.net.ChatFailure
 import app.jarvis.tools.ToolInfo
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +39,8 @@ data class ChatState(
 
 class ChatViewModel(
     private val repository: ChatRepository,
-    private val workspace: WorkspaceStore
+    private val workspace: WorkspaceStore,
+    private val autonomous: AutonomousAgentManager
 ) : ViewModel() {
     private val mutable = MutableStateFlow(ChatState())
     val state = mutable.asStateFlow()
@@ -145,7 +147,8 @@ class ChatViewModel(
                     history,
                     shouldContinue = flag::get,
                     onProgress = { note -> if (flag.get()) mutable.value = mutable.value.copy(statusText = note) },
-                    onInterim = { text -> if (flag.get()) addInterim(conversationId, text) }
+                    onInterim = { text -> if (flag.get()) addAssistantMessage(conversationId, text, null) },
+                    onSummary = { text -> if (flag.get()) addAssistantMessage(conversationId, text, SUMMARY_DETAIL) }
                 )
             }
             if (flag.get()) applyResult(conversationId, user, result)
@@ -203,12 +206,25 @@ class ChatViewModel(
      * Ответ модели, предшествующий вызовам инструментов, показываем сразу отдельным
      * сообщением: пользователь видит намерение до того, как команды выполнятся.
      */
-    private fun addInterim(conversationId: String, text: String) {
-        val message = Message(role = "assistant", text = text.trim())
+    private fun addAssistantMessage(conversationId: String, text: String, detail: String?) {
+        val message = Message(role = "assistant", text = text.trim(), detail = detail)
         if (message.text.isBlank()) return
         repository.saveMessage(conversationId, message)
         if (mutable.value.activeConversationId == conversationId) {
             mutable.value = mutable.value.copy(messages = mutable.value.messages + message)
+        }
+    }
+
+    /** Передаёт текущий черновик автономному агенту: он доведёт работу в фоне. */
+    fun startAutonomous(objective: String = mutable.value.draft) {
+        val goal = objective.trim()
+        if (goal.isBlank() || mutable.value.sending) return
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { autonomous.start(goal, null, autoApproveSsh = false) } }
+                .onSuccess { task ->
+                    mutable.value = mutable.value.copy(draft = "", banner = "Автономная задача запущена: ${task.title}")
+                }
+                .onFailure { mutable.value = mutable.value.copy(banner = it.message ?: "Не удалось запустить задачу") }
         }
     }
 
@@ -278,4 +294,6 @@ class ChatViewModel(
         is IllegalArgumentException -> error.message ?: "Проверьте настройки"
         else -> "Ошибка"
     }
+
+    private companion object { const val SUMMARY_DETAIL = "summary" }
 }
