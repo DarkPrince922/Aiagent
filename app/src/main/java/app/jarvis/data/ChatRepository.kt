@@ -56,7 +56,8 @@ class ChatRepository(
         history: List<Message>,
         shouldContinue: () -> Boolean = { true },
         allowUnlimited: Boolean = true,
-        onProgress: (String) -> Unit = {}
+        onProgress: (String) -> Unit = {},
+        onInterim: (String) -> Unit = {}
     ): Result<AgentReply> = runCatching {
         val saved = settingsStore.get()
         val limited = if (allowUnlimited) saved else saved.copy(unlimitedAgent = false, agentSteps = 10)
@@ -69,10 +70,16 @@ class ChatRepository(
         }
         settings.readinessError?.let { throw IllegalArgumentException(it) }
         val messages = buildList {
-            add(ApiMessage("system", "${settings.systemPrompt}\nТекущие локальные дата и время: ${ZonedDateTime.now()}\nСохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}"))
+            add(ApiMessage("system", buildString {
+                append(settings.systemPrompt)
+                if (settings.toolsEnabled && settings.answerBeforeTools) append("\n\n").append(ANSWER_FIRST_PROTOCOL)
+                append("\nТекущие локальные дата и время: ").append(ZonedDateTime.now())
+                append("\nСохранённые SSH-профили (секреты не передаются):\n").append(tools.sshContext())
+                append("\nРабочая папка обмена файлами: ").append(workspaceHint())
+            }))
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
-        runAgent(settings, messages, shouldContinue, onProgress)
+        runAgent(settings, messages, shouldContinue, onProgress, onInterim)
     }
 
     fun confirm(action: PendingAgentAction, approved: Boolean, shouldContinue: () -> Boolean = { true }): Result<AgentReply> = runCatching {
@@ -137,7 +144,8 @@ class ChatRepository(
         settings: ProviderSettings,
         initial: List<ApiMessage>,
         shouldContinue: () -> Boolean,
-        onProgress: (String) -> Unit = {}
+        onProgress: (String) -> Unit = {},
+        onInterim: (String) -> Unit = {}
     ): AgentReply {
         var messages = initial
         var fallbackNotice: String? = null
@@ -167,6 +175,9 @@ class ChatRepository(
                 answer.toolCalls.forEach { call -> messages = messages + ApiMessage("tool", "REPEATED_CALL: вызов остановлен как повторяющийся", toolCallId = call.id) }
                 return synthesize(settings, messages, fallbackNotice, "Модель повторяла один и тот же инструмент")
             }
+            // Ответ модели, предшествующий вызовам, показываем сразу: пользователь видит,
+            // что понято и что сейчас будет сделано, ещё до выполнения команд.
+            if (answer.text.isNotBlank()) onInterim(answer.text)
             answer.toolCalls.forEachIndexed { index, call ->
                 onProgress("Инструмент: ${call.name}")
                 val result = tools.execute(call.name, call.arguments)
@@ -198,5 +209,14 @@ class ChatRepository(
         return messages
     }
 
-    private companion object { const val MAX_LOCAL_STEPS = 2 }
+    private fun workspaceHint(): String =
+        "файлы, которыми обменялись с пользователем; список — list_files, чтение — read_file, создание — write_file, отправка пользователю — send_file"
+
+    private companion object {
+        const val MAX_LOCAL_STEPS = 2
+        const val ANSWER_FIRST_PROTOCOL =
+            "ПОРЯДОК РАБОТЫ: сначала прочитай запрос и ответь на него обычным текстом — что ты понял и что " +
+                "намерен сделать. Вызовы инструментов помещай в тот же ответ, но только после этого текста. " +
+                "Никогда не вызывай инструмент, не написав перед этим ни слова."
+    }
 }

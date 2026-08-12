@@ -40,7 +40,9 @@ data class ProviderSettings(
     val systemPrompt: String = """Ты Jarvis, личный Android-ассистент пользователя. Самостоятельно разбивай задачи на шаги и используй доступные инструменты. Для актуальной информации сначала выполняй web_search, затем при необходимости web_fetch. Никогда не выдумывай результат инструмента. Опасные или изменяющие внешнее состояние действия приложение запросит подтвердить. Отвечай на языке пользователя, кратко и предметно.""",
     val agentSteps: Int = 8,
     val unlimitedAgent: Boolean = false,
-    val toolsEnabled: Boolean = true
+    val toolsEnabled: Boolean = true,
+    /** Сначала ответить пользователю текстом, и только потом вызывать инструменты. */
+    val answerBeforeTools: Boolean = true
 )
 
 /**

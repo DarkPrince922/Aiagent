@@ -14,8 +14,10 @@ import android.os.Environment
 import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.provider.Settings
+import androidx.core.content.FileProvider
 import app.jarvis.data.NoteStore
 import app.jarvis.data.SshProfileStore
+import app.jarvis.data.WorkspaceStore
 import app.jarvis.net.SshService
 import app.jarvis.net.UrlPolicy
 import app.jarvis.net.WebService
@@ -56,7 +58,8 @@ class ToolRegistry(
     private val notes: NoteStore,
     private val profiles: SshProfileStore,
     private val web: WebService,
-    private val ssh: SshService
+    private val ssh: SshService,
+    private val workspace: WorkspaceStore
 ) {
     val catalog = listOf(
         ToolInfo("web_search", "Поиск в интернете", "Ищет актуальные источники", "Интернет", "travel_explore", ToolRisk.READ_ONLY),
@@ -77,7 +80,11 @@ class ToolRegistry(
         ToolInfo("share_text", "Поделиться", "Открывает системное меню отправки", "Коммуникации", "share", ToolRisk.CHANGES_DEVICE),
         ToolInfo("clipboard_read", "Буфер обмена", "Читает текст после подтверждения", "Устройство", "content_paste", ToolRisk.CHANGES_DEVICE),
         ToolInfo("clipboard_write", "Копировать", "Копирует текст после подтверждения", "Устройство", "content_copy", ToolRisk.CHANGES_DEVICE),
-        ToolInfo("device_status", "Устройство", "Показывает сеть, батарею и память", "Устройство", "phone_android", ToolRisk.READ_ONLY)
+        ToolInfo("device_status", "Устройство", "Показывает сеть, батарею и память", "Устройство", "phone_android", ToolRisk.READ_ONLY),
+        ToolInfo("list_files", "Файлы", "Показывает файлы, которыми вы обменялись с агентом", "Файлы", "folder", ToolRisk.READ_ONLY),
+        ToolInfo("read_file", "Прочитать файл", "Читает текстовый или JSON-файл из рабочей папки", "Файлы", "description", ToolRisk.READ_ONLY),
+        ToolInfo("write_file", "Записать файл", "Создаёт текстовый или JSON-файл", "Файлы", "note_add", ToolRisk.CHANGES_DEVICE),
+        ToolInfo("send_file", "Отправить файл", "Передаёт файл вам через меню «Поделиться»", "Файлы", "attach_file", ToolRisk.CHANGES_DEVICE)
     )
 
     /**
@@ -188,6 +195,32 @@ class ToolRegistry(
             "set_timer" -> confirmIntent(confirmed, "Запустить таймер на ${args.getInt("seconds")} сек.?", Intent(AlarmClock.ACTION_SET_TIMER).putExtra(AlarmClock.EXTRA_LENGTH, args.getInt("seconds")).putExtra(AlarmClock.EXTRA_MESSAGE, args.optString("label")))
             "add_calendar_event" -> confirmIntent(confirmed, "Добавить событие «${args.string("title")}»?", Intent(Intent.ACTION_INSERT).setData(CalendarContract.Events.CONTENT_URI).putExtra(CalendarContract.Events.TITLE, args.string("title")).putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, args.getLong("start_epoch_ms")).putExtra(CalendarContract.EXTRA_EVENT_END_TIME, args.optLong("end_epoch_ms", args.getLong("start_epoch_ms") + 3_600_000)).putExtra(CalendarContract.Events.EVENT_LOCATION, args.optString("location")))
             "open_app_settings" -> confirmIntent(confirmed, "Открыть настройки Jarvis?", Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+            "list_files" -> done(JSONArray().apply {
+                workspace.list().forEach { file ->
+                    put(JSONObject().put("name", file.name).put("bytes", file.bytes).put("modified", Instant.ofEpochMilli(file.modifiedAt).toString()))
+                }
+            }.toString().let { if (it == "[]") "Рабочая папка пуста" else it })
+            "read_file" -> done(workspace.read(args.string("name")))
+            "write_file" -> {
+                val saved = workspace.write(args.string("name"), args.getString("content"))
+                done("Записан файл ${saved.name}, ${saved.bytes} байт. Чтобы передать его пользователю, вызови send_file.")
+            }
+            "send_file" -> {
+                val file = workspace.resolve(args.string("name"))
+                require(file.isFile) { "Файл ${args.string("name")} не найден" }
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                confirmIntent(
+                    confirmed,
+                    "Отправить вам файл ${file.name}?",
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND)
+                            .setType(mimeOf(file.name))
+                            .putExtra(Intent.EXTRA_STREAM, uri)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                        "Файл от Jarvis"
+                    )
+                )
+            }
             "record_progress", "finish_task" -> done("Этот инструмент доступен только координатору автономной задачи")
             else -> done("Ошибка: неизвестный инструмент $name")
         }
@@ -227,6 +260,12 @@ class ToolRegistry(
         }
     }
     /** Единая политика: HTTPS, без credentials в URL и без адресов внутренней сети. */
+    private fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "json" -> "application/json"
+        "csv" -> "text/csv"
+        else -> "text/plain"
+    }
+
     private fun publicUri(raw: String): Uri = Uri.parse(UrlPolicy.requirePublicHttps(raw).toString())
 
     private fun deviceStatus(): String {
@@ -273,7 +312,11 @@ class ToolRegistry(
             "create_note",
             "web_search",
             "set_timer",
-            "open_url"
+            "open_url",
+            "list_files",
+            "read_file",
+            "write_file",
+            "send_file"
         )
     }
 

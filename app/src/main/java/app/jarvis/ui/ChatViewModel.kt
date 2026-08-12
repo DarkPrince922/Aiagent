@@ -112,9 +112,12 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
             val result = withContext(Dispatchers.IO) {
                 repository.saveMessage(conversationId, user)
                 repository.titleFromFirstMessage(conversationId, text)
-                repository.send(history, shouldContinue = flag::get) { note ->
-                    if (flag.get()) mutable.value = mutable.value.copy(statusText = note)
-                }
+                repository.send(
+                    history,
+                    shouldContinue = flag::get,
+                    onProgress = { note -> if (flag.get()) mutable.value = mutable.value.copy(statusText = note) },
+                    onInterim = { text -> if (flag.get()) addInterim(conversationId, text) }
+                )
             }
             if (flag.get()) applyResult(conversationId, user, result)
         }
@@ -166,6 +169,19 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     fun saveSettings(settings: ProviderSettings) { repository.saveSettings(settings); checkConnection(settings) }
 
     fun showBanner(message: String) { mutable.value = mutable.value.copy(banner = message) }
+
+    /**
+     * Ответ модели, предшествующий вызовам инструментов, показываем сразу отдельным
+     * сообщением: пользователь видит намерение до того, как команды выполнятся.
+     */
+    private fun addInterim(conversationId: String, text: String) {
+        val message = Message(role = "assistant", text = text.trim())
+        if (message.text.isBlank()) return
+        repository.saveMessage(conversationId, message)
+        if (mutable.value.activeConversationId == conversationId) {
+            mutable.value = mutable.value.copy(messages = mutable.value.messages + message)
+        }
+    }
 
     private fun canNavigate() = !mutable.value.sending && mutable.value.pending == null
 

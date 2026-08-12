@@ -72,7 +72,7 @@ import app.jarvis.data.ProviderSettings
             item { ListItem(headlineContent = { Text("Инструменты ограничены грамматикой") }, supportingContent = { Text("GBNF не даёт модели выдумать имя инструмента или сломать JSON — без этого 4B-модель постоянно ошибается в вызовах") }, leadingContent = { Icon(Icons.Default.Rule, null, tint = MaterialTheme.colorScheme.primary) }) }
         }
         item { SectionTitle("AI-провайдер", Icons.Default.Cloud) }
-        item { SettingsField { OutlinedTextField(value.endpoint, { value = value.copy(endpoint = it) }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, leadingIcon = { Icon(Icons.Default.Link, null) }, supportingText = { Text("OpenAI-совместимый адрес, заканчивающийся на /v1") }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
+        item { SettingsField { OutlinedTextField(value.endpoint, { value = value.copy(endpoint = it) }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, leadingIcon = { Icon(Icons.Default.Link, null) }, supportingText = { Text("OpenAI-совместимый адрес на /v1. Свой сервер в локальной сети можно указывать по http://") }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
         item { SettingsField { OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(), label = { Text("Модель") }, leadingIcon = { Icon(Icons.Default.Memory, null) }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
         item { LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(cloudModels) { model -> SuggestionChip(onClick = { value = value.copy(model = model) }, label = { Text(model) }, icon = if (value.model == model) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null) } } }
         item { SettingsField { OutlinedTextField(value.apiKey, { value = value.copy(apiKey = it) }, Modifier.fillMaxWidth(), label = { Text("API-ключ") }, leadingIcon = { Icon(Icons.Default.Key, null) }, trailingIcon = { IconButton(onClick = { keyVisible = !keyVisible }) { Icon(if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (keyVisible) "Скрыть" else "Показать") } }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, supportingText = { Text("Шифруется ключом Android Keystore") }) } }
@@ -102,6 +102,15 @@ import app.jarvis.data.ProviderSettings
                 supportingContent = { Text("Агент работает до результата или нажатия «Стоп»; повторяющиеся циклы блокируются") },
                 leadingContent = { Icon(Icons.Default.AllInclusive, null) },
                 trailingContent = { Switch(value.unlimitedAgent, { value = value.copy(unlimitedAgent = it) }) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
+        item {
+            ListItem(
+                headlineContent = { Text("Сначала ответ, потом действия") },
+                supportingContent = { Text("Модель обязана сперва написать, что поняла и что собирается делать, и только затем вызывать инструменты. Этот текст появляется в чате до выполнения команд") },
+                leadingContent = { Icon(Icons.Default.Forum, null) },
+                trailingContent = { Switch(value.answerBeforeTools, { value = value.copy(answerBeforeTools = it) }) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }

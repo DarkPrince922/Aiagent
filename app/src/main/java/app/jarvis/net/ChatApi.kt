@@ -107,8 +107,13 @@ class ChatApi : LanguageModel {
     }
 
     private fun requestOnce(settings: ProviderSettings, path: String, method: String, body: JSONObject?, requestId: String): String {
-        val endpoint = settings.endpoint.trim().trimEnd('/')
-        if (!endpoint.startsWith("https://")) throw ChatFailure.Protocol("Endpoint должен начинаться с https://")
+        val endpoint = try {
+            UrlPolicy.requireProviderEndpoint(settings.endpoint).toString().trimEnd('/')
+        } catch (error: UnsafeUrlException) {
+            throw ChatFailure.Protocol(error.message ?: "Некорректный endpoint", error)
+        } catch (error: java.net.UnknownHostException) {
+            throw ChatFailure.Transport("Не удалось найти сервер. Проверьте адрес и сеть", error)
+        }
         val connection = try {
             URL("$endpoint/$path").openConnection() as HttpURLConnection
         } catch (error: Exception) {

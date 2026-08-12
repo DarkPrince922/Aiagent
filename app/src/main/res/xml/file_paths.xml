@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Рабочая папка обмена файлами. Наружу отдаётся только она: остальные каталоги
+         приложения (настройки, базы, модели) через FileProvider недоступны. -->
+    <external-files-path name="workspace" path="workspace/" />
+    <files-path name="workspace-internal" path="workspace/" />
+</paths>

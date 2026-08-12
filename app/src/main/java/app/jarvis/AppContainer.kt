@@ -9,6 +9,7 @@ import app.jarvis.data.PendingStore
 import app.jarvis.data.NoteStore
 import app.jarvis.data.SettingsStore
 import app.jarvis.data.SshProfileStore
+import app.jarvis.data.WorkspaceStore
 import app.jarvis.net.ChatApi
 import app.jarvis.net.SshService
 import app.jarvis.net.WebService
@@ -26,10 +27,11 @@ class AppContainer(context: Context) {
     val conversations = ConversationStore(context)
     val notes = NoteStore(context)
     val sshProfiles = SshProfileStore(context)
+    val workspace = WorkspaceStore(context)
     val web = WebService()
     val api = ChatApi()
     val ssh = SshService(sshProfiles)
-    val tools = ToolRegistry(context, notes, sshProfiles, web, ssh)
+    val tools = ToolRegistry(context, notes, sshProfiles, web, ssh, workspace)
     val notifications = AgentNotifications(context)
     val modelStore = ModelStore(context)
     val modelDownloads = ModelDownloads(context, modelStore, settings)

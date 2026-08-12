@@ -67,4 +67,28 @@ class UrlPolicyTest {
         assertEquals("https://other.example/y", UrlPolicy.resolveRedirect(current, "https://other.example/y").toString())
         assertThrows(UnsafeUrlException::class.java) { UrlPolicy.resolveRedirect(current, "  ") }
     }
+
+    @Test fun providerEndpointAllowsPlainHttpOnlyInsideTheLocalNetwork() {
+        // Свой сервер дома обычно без сертификата — для него http допустим.
+        assertEquals("192.168.1.50", UrlPolicy.requireProviderEndpoint("http://192.168.1.50:11434/v1").host)
+        assertEquals("127.0.0.1", UrlPolicy.requireProviderEndpoint("http://127.0.0.1:8080/v1").host)
+        assertEquals("100.101.102.103", UrlPolicy.requireProviderEndpoint("http://100.101.102.103/v1").host)
+    }
+
+    @Test fun providerEndpointRefusesPlainHttpToTheInternet() {
+        // Незашифрованный API-ключ наружу уходить не должен.
+        assertThrows(UnsafeUrlException::class.java) {
+            UrlPolicy.requireProviderEndpoint("http://8.8.8.8/v1")
+        }
+    }
+
+    @Test fun providerEndpointKeepsHttpsForAnyHost() {
+        assertEquals("8.8.8.8", UrlPolicy.requireProviderEndpoint("https://8.8.8.8/v1").host)
+        assertEquals("192.168.1.50", UrlPolicy.requireProviderEndpoint("https://192.168.1.50/v1").host)
+    }
+
+    @Test fun providerEndpointRejectsOtherSchemesAndCredentials() {
+        assertThrows(UnsafeUrlException::class.java) { UrlPolicy.requireProviderEndpoint("ftp://example.com/v1") }
+        assertThrows(UnsafeUrlException::class.java) { UrlPolicy.requireProviderEndpoint("https://user:pw@8.8.8.8/v1") }
+    }
 }

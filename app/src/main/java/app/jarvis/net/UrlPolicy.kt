@@ -75,6 +75,38 @@ object UrlPolicy {
 
     fun isPublicHttps(raw: String): Boolean = runCatching { requirePublicHttps(raw) }.isSuccess
 
+    /**
+     * Адрес самого провайдера моделей — правило мягче, чем для инструментов.
+     *
+     * Свой сервер в домашней сети обычно висит на голом HTTP и без сертификата, поэтому
+     * `http://` разрешён, но только когда хост резолвится во внутреннюю сеть. Наружу
+     * по-прежнему можно ходить исключительно по HTTPS: незашифрованный API-ключ в интернете
+     * недопустим.
+     */
+    fun requireProviderEndpoint(raw: String): URI {
+        val uri = parse(raw)
+        val scheme = uri.scheme?.lowercase()
+        if (uri.userInfo != null) throw UnsafeUrlException("Логин и пароль в адресе не поддерживаются")
+        val host = uri.host
+        if (host.isNullOrBlank()) throw UnsafeUrlException("В адресе нет хоста")
+        return when (scheme) {
+            "https" -> uri
+            "http" -> {
+                val addresses = try {
+                    InetAddress.getAllByName(host)
+                } catch (error: UnknownHostException) {
+                    throw UnknownHostException("Не удалось определить IP-адрес $host")
+                }
+                if (addresses.isNotEmpty() && addresses.all { isPrivate(it) }) {
+                    uri
+                } else {
+                    throw UnsafeUrlException("HTTP разрешён только для адресов в локальной сети; для внешнего сервера нужен https://")
+                }
+            }
+            else -> throw UnsafeUrlException("Адрес должен начинаться с https:// или http:// для локального сервера")
+        }
+    }
+
     /** Разворачивает Location относительно текущего адреса, включая схемо-относительные `//host/path`. */
     fun resolveRedirect(current: URI, location: String): URI {
         val target = location.trim()
