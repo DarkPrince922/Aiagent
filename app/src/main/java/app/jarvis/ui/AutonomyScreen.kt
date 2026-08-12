@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -179,9 +180,17 @@ fun AutonomyScreen(vm: AutonomyViewModel) {
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                // Порог совпадает с проверкой в AutonomousAgentManager.start: иначе кнопка
+                // включалась бы на двух буквах, а запуск тут же падал с ошибкой.
+                val blocker = when {
+                    state.objective.trim().length < MIN_OBJECTIVE -> "Опишите цель задачи — не короче $MIN_OBJECTIVE символов"
+                    selectedProfile != null && state.autoApproveSsh && !selectedProfile.trusted ->
+                        "Профиль «${selectedProfile.name}» не проверен: откройте «Серверы» и нажмите «Проверить», либо выключите SSH AUTOGRANT"
+                    else -> null
+                }
                 Button(
                     onClick = vm::start,
-                    enabled = state.objective.isNotBlank() && !state.creating && (selectedProfile == null || !state.autoApproveSsh || selectedProfile.trusted),
+                    enabled = blocker == null && !state.creating,
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     shape = RoundedCornerShape(6.dp)
                 ) {
@@ -189,6 +198,15 @@ fun AutonomyScreen(vm: AutonomyViewModel) {
                     else Icon(Icons.Default.RocketLaunch, null)
                     Spacer(Modifier.width(8.dp))
                     Text("ЗАПУСТИТЬ")
+                }
+                // Неактивная кнопка без причины — самая частая причина считать приложение сломанным.
+                blocker?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Info, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.tertiary)
+                        Spacer(Modifier.width(6.dp))
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                    }
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -466,3 +484,5 @@ private fun eventColor(kind: AgentEventKind): Color = when (kind) {
     AgentEventKind.ERROR -> MaterialTheme.colorScheme.error
     AgentEventKind.SYSTEM -> MaterialTheme.colorScheme.onSurfaceVariant
 }
+
+private const val MIN_OBJECTIVE = 8

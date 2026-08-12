@@ -39,6 +39,9 @@ class ShareIntake(private val resolver: ContentResolver, private val workspace: 
         return Result(saved, errors)
     }
 
+    /** Импорт одного файла: кнопка «прикрепить» в чате идёт этим же путём. */
+    fun importUri(uri: Uri): WorkspaceFile = save(uri)
+
     private fun save(uri: Uri): WorkspaceFile {
         val name = displayName(uri) ?: "shared.txt"
         val bytes = resolver.openInputStream(uri)?.use { stream ->

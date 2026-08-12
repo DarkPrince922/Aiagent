@@ -3,6 +3,8 @@ package app.jarvis.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.jarvis.data.*
+import android.content.ContentResolver
+import android.net.Uri
 import app.jarvis.net.ChatFailure
 import app.jarvis.tools.ToolInfo
 import kotlinx.coroutines.Dispatchers
@@ -27,12 +29,17 @@ data class ChatState(
     val pending: PendingAgentAction? = null,
     val apiStatus: ApiStatus = ApiStatus.NOT_CONFIGURED,
     val statusText: String = "Добавьте API-ключ",
+    /** Файлы, прикреплённые к следующему сообщению. */
+    val attachments: List<String> = emptyList(),
     val banner: String? = null
 ) {
     val activeTitle: String get() = conversations.firstOrNull { it.id == activeConversationId }?.title ?: "Новый чат"
 }
 
-class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
+class ChatViewModel(
+    private val repository: ChatRepository,
+    private val workspace: WorkspaceStore
+) : ViewModel() {
     private val mutable = MutableStateFlow(ChatState())
     val state = mutable.asStateFlow()
     val tools: List<ToolInfo> get() = repository.catalog()
@@ -65,6 +72,27 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     }
 
     fun updateDraft(value: String) { mutable.value = mutable.value.copy(draft = value) }
+
+    /**
+     * Кладёт выбранный файл в рабочую папку и прикрепляет к следующему сообщению.
+     * Копия нужна, потому что право на URI от системного выбора живёт лишь до конца операции.
+     */
+    fun attach(resolver: ContentResolver, uri: Uri) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { ShareIntake(resolver, workspace).importUri(uri) } }
+                .onSuccess { saved ->
+                    mutable.value = mutable.value.copy(
+                        attachments = (mutable.value.attachments + saved.name).distinct(),
+                        banner = null
+                    )
+                }
+                .onFailure { mutable.value = mutable.value.copy(banner = it.message ?: "Не удалось прикрепить файл") }
+        }
+    }
+
+    fun removeAttachment(name: String) {
+        mutable.value = mutable.value.copy(attachments = mutable.value.attachments - name)
+    }
 
     fun prefill(prompt: String) {
         if (!mutable.value.sending) mutable.value = mutable.value.copy(draft = prompt)
@@ -100,13 +128,14 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     }
 
     fun send(raw: String = mutable.value.draft): Boolean {
-        val text = raw.trim()
+        val attachments = mutable.value.attachments
+        val text = withAttachments(raw.trim(), attachments)
         val conversationId = mutable.value.activeConversationId ?: return false
         if (text.isBlank() || mutable.value.sending || mutable.value.pending != null || mutable.value.loading) return false
         val user = Message(role = "user", text = text, state = DeliveryState.SENDING)
         val history = mutable.value.messages + user
         continueFlag = AtomicBoolean(true)
-        mutable.value = mutable.value.copy(messages = history, draft = "", sending = true, banner = null)
+        mutable.value = mutable.value.copy(messages = history, draft = "", attachments = emptyList(), sending = true, banner = null)
         val flag = continueFlag
         agentJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -181,6 +210,12 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
         if (mutable.value.activeConversationId == conversationId) {
             mutable.value = mutable.value.copy(messages = mutable.value.messages + message)
         }
+    }
+
+    /** Модель узнаёт о файлах из текста запроса: имена ведут прямо к read_file. */
+    private fun withAttachments(text: String, attachments: List<String>): String = when {
+        attachments.isEmpty() -> text
+        else -> "Прикреплённые файлы (читай их через read_file): ${attachments.joinToString(", ")}\n\n$text"
     }
 
     private fun canNavigate() = !mutable.value.sending && mutable.value.pending == null

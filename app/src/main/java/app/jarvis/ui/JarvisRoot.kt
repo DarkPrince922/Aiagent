@@ -58,7 +58,7 @@ fun JarvisRoot(container: AppContainer) {
     val vm: ChatViewModel = viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(container.repository) as T
+            ChatViewModel(container.repository, container.workspace) as T
     })
     val autonomyVm: AutonomyViewModel = viewModel(key = "autonomy", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

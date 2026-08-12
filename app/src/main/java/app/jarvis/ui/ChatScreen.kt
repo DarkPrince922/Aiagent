@@ -109,6 +109,9 @@ import java.util.Locale
         }
         ChatComposer(
             draft = state.draft,
+            attachments = state.attachments,
+            onAttach = vm::attach,
+            onRemoveAttachment = vm::removeAttachment,
             enabled = !state.sending && state.pending == null,
             sending = state.sending,
             onDraft = vm::updateDraft,
@@ -230,11 +233,47 @@ import java.util.Locale
     }
 }
 
-@Composable private fun ChatComposer(draft: String, enabled: Boolean, sending: Boolean, onDraft: (String) -> Unit, onSend: () -> Unit, onStop: () -> Unit, onVoice: () -> Unit) {
+@Composable private fun ChatComposer(
+    draft: String,
+    attachments: List<String>,
+    onAttach: (android.content.ContentResolver, android.net.Uri) -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    enabled: Boolean,
+    sending: Boolean,
+    onDraft: (String) -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+    onVoice: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Системный выбор файла: не требует разрешений, право на URI выдаётся под конкретный файл.
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onAttach(context.contentResolver, uri)
+    }
     Surface(color = MaterialTheme.colorScheme.surface) {
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            if (attachments.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    attachments.forEach { name ->
+                        InputChip(
+                            selected = true,
+                            onClick = { onRemoveAttachment(name) },
+                            label = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingIcon = { Icon(Icons.Default.Description, null, Modifier.size(16.dp)) },
+                            trailingIcon = { Icon(Icons.Default.Close, "Убрать", Modifier.size(16.dp)) }
+                        )
+                    }
+                }
+            }
             Row(Modifier.fillMaxWidth().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
+                IconButton(
+                    onClick = { picker.launch(arrayOf("text/*", "application/json")) },
+                    enabled = enabled
+                ) { Icon(Icons.Default.AttachFile, "Прикрепить файл") }
                 IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Default.Mic, "Голосовой ввод") }
                 OutlinedTextField(draft, onDraft, Modifier.weight(1f), placeholder = { Text("Поручить задачу") }, maxLines = 5, enabled = enabled, shape = RoundedCornerShape(8.dp), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onSend() }))
                 Spacer(Modifier.width(8.dp))
@@ -248,7 +287,7 @@ import java.util.Locale
                     label = "send-stop"
                 ) { isSending ->
                     if (isSending) FilledIconButton(onClick = onStop, modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(8.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Default.Stop, "Остановить") }
-                    else FilledIconButton(onClick = onSend, enabled = enabled && draft.isNotBlank(), modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(8.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Отправить") }
+                    else FilledIconButton(onClick = onSend, enabled = enabled && (draft.isNotBlank() || attachments.isNotEmpty()), modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(8.dp)) { Icon(Icons.AutoMirrored.Filled.Send, "Отправить") }
                 }
             }
         }
