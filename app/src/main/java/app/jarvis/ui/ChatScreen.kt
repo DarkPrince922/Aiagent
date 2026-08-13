@@ -77,6 +77,14 @@ import java.util.Locale
                             Box(Modifier.size(7.dp).background(statusColor(state.apiStatus), CircleShape))
                             Spacer(Modifier.width(7.dp))
                             Text(state.statusText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            // Без инструментов агент не читает файлы и не ходит в сеть, а внешне
+                            // выглядит полностью рабочим — состояние должно быть на виду.
+                            if (state.toolsDisabled) {
+                                Spacer(Modifier.width(8.dp))
+                                Icon(Icons.Default.Extension, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.tertiary)
+                                Spacer(Modifier.width(3.dp))
+                                Text("инструменты выкл", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary, maxLines = 1)
+                            }
                         }
                     }
                     IconButton(onClick = { historyOpen = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.History, "История чатов") }

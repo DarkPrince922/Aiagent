@@ -32,6 +32,8 @@ data class ChatState(
     val statusText: String = "Добавьте API-ключ",
     /** Файлы, прикреплённые к следующему сообщению. */
     val attachments: List<String> = emptyList(),
+    /** Инструменты выключены в настройках: агент не сможет ни читать файлы, ни ходить в сеть. */
+    val toolsDisabled: Boolean = false,
     val banner: String? = null
 ) {
     val activeTitle: String get() = conversations.firstOrNull { it.id == activeConversationId }?.title ?: "Новый чат"
@@ -56,6 +58,7 @@ class ChatViewModel(
             }
             mutable.value = mutable.value.copy(conversations = initial.first, activeConversationId = initial.second, messages = initial.third, loading = false)
         }
+        mutable.value = mutable.value.copy(toolsDisabled = !repository.settings().toolsEnabled)
         val readiness = repository.settings().readinessError
         // Иначе в локальном режиме шапка советовала бы добавить API-ключ, который там не нужен.
         if (readiness == null) checkConnection() else mutable.value = mutable.value.copy(statusText = readiness)
@@ -83,9 +86,12 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { ShareIntake(resolver, workspace).importUri(uri) } }
                 .onSuccess { saved ->
+                    val toolsOff = !repository.settings().toolsEnabled
                     mutable.value = mutable.value.copy(
                         attachments = (mutable.value.attachments + saved.name).distinct(),
-                        banner = null
+                        toolsDisabled = toolsOff,
+                        // Молча принять файл, который агент не сможет открыть, — худший вариант.
+                        banner = if (toolsOff) "Инструменты выключены в настройках: агент не сможет прочитать файл" else null
                     )
                 }
                 .onFailure { mutable.value = mutable.value.copy(banner = it.message ?: "Не удалось прикрепить файл") }
@@ -131,15 +137,17 @@ class ChatViewModel(
 
     fun send(raw: String = mutable.value.draft): Boolean {
         val attachments = mutable.value.attachments
-        val text = withAttachments(raw.trim(), attachments)
+        val body = raw.trim()
         val conversationId = mutable.value.activeConversationId ?: return false
-        if (text.isBlank() || mutable.value.sending || mutable.value.pending != null || mutable.value.loading) return false
-        val user = Message(role = "user", text = text, state = DeliveryState.SENDING)
-        val history = mutable.value.messages + user
+        if ((body.isBlank() && attachments.isEmpty()) || mutable.value.sending || mutable.value.pending != null || mutable.value.loading) return false
         continueFlag = AtomicBoolean(true)
-        mutable.value = mutable.value.copy(messages = history, draft = "", attachments = emptyList(), sending = true, banner = null)
+        mutable.value = mutable.value.copy(draft = "", attachments = emptyList(), sending = true, banner = null)
         val flag = continueFlag
         agentJob = viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) { withAttachments(body, attachments) }
+            val user = Message(role = "user", text = text, state = DeliveryState.SENDING)
+            val history = mutable.value.messages + user
+            mutable.value = mutable.value.copy(messages = history)
             val result = withContext(Dispatchers.IO) {
                 repository.saveMessage(conversationId, user)
                 repository.titleFromFirstMessage(conversationId, text)
@@ -198,7 +206,11 @@ class ChatViewModel(
         }
     }
 
-    fun saveSettings(settings: ProviderSettings) { repository.saveSettings(settings); checkConnection(settings) }
+    fun saveSettings(settings: ProviderSettings) {
+        repository.saveSettings(settings)
+        mutable.value = mutable.value.copy(toolsDisabled = !settings.toolsEnabled)
+        checkConnection(settings)
+    }
 
     fun showBanner(message: String) { mutable.value = mutable.value.copy(banner = message) }
 
@@ -228,10 +240,35 @@ class ChatViewModel(
         }
     }
 
-    /** Модель узнаёт о файлах из текста запроса: имена ведут прямо к read_file. */
-    private fun withAttachments(text: String, attachments: List<String>): String = when {
-        attachments.isEmpty() -> text
-        else -> "Прикреплённые файлы (читай их через read_file): ${attachments.joinToString(", ")}\n\n$text"
+    /**
+     * Помимо имён кладёт начало каждого файла прямо в запрос.
+     *
+     * Имени достаточно, только если инструменты включены и провайдер их поддерживает.
+     * Когда это не так, модель отвечает «read_file у меня нет» и содержимое до неё не доходит
+     * вовсе — начало файла спасает этот случай, а полный текст агент дочитает через read_file.
+     */
+    private fun withAttachments(text: String, attachments: List<String>): String {
+        if (attachments.isEmpty()) return text
+        val previews = attachments.joinToString("\n\n") { name ->
+            runCatching {
+                val chunk = workspace.readChunk(name, 0, PREVIEW_CHARS)
+                buildString {
+                    append("=== ").append(chunk.name)
+                    append(" (всего ").append(chunk.totalChars).append(" символов, ").append(chunk.totalLines).append(" строк) ===\n")
+                    append(chunk.text)
+                    if (chunk.hasMore) {
+                        append("\n… показано начало. Остальное: read_file c name=\"")
+                        append(chunk.name).append("\" и offset=").append(chunk.nextOffset)
+                        append(", поиск по файлу: search_file")
+                    }
+                }
+            }.getOrElse { "=== $name ===\n[не удалось прочитать: ${it.message}]" }
+        }
+        return buildString {
+            append("Прикреплённые файлы: ").append(attachments.joinToString(", ")).append("\n\n")
+            append(previews)
+            if (text.isNotBlank()) append("\n\n").append(text)
+        }
     }
 
     private fun canNavigate() = !mutable.value.sending && mutable.value.pending == null
@@ -295,5 +332,9 @@ class ChatViewModel(
         else -> "Ошибка"
     }
 
-    private companion object { const val SUMMARY_DETAIL = "summary" }
+    private companion object {
+        const val SUMMARY_DETAIL = "summary"
+        /** Хватает, чтобы понять структуру отчёта; полный текст берётся через read_file. */
+        const val PREVIEW_CHARS = 4_000
+    }
 }
