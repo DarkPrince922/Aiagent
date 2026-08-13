@@ -48,6 +48,20 @@ class FileChunkTest {
         assertEquals(total, offset + minOf(WorkspaceStore.DEFAULT_CHUNK_CHARS, total - offset))
     }
 
+    /** Архив — единственный двоичный формат: имя должно уцелеть, а чтение как текста запрещено. */
+    @Test fun archivesKeepTheirExtensionWhileEverythingUnknownBecomesText() {
+        assertEquals("отчёт.zip", WorkspaceStore.safeName("отчёт.zip"))
+        assertEquals("report.zip", WorkspaceStore.safeName("/tmp/../report.ZIP"))
+        assertEquals("payload.txt", WorkspaceStore.safeName("payload.exe"))
+        assertEquals("lib.txt", WorkspaceStore.safeName("lib.so"))
+    }
+
+    @Test fun onlyTextFilesAreReadable() {
+        assertTrue(WorkspaceStore.isText("report.json"))
+        assertTrue(WorkspaceStore.isText("log.LOG"))
+        assertFalse("Архив как текст — мусор в контексте модели", WorkspaceStore.isText("bundle.zip"))
+    }
+
     @Test fun chunkLimitsAreOrderedSensibly() {
         assertTrue(WorkspaceStore.DEFAULT_CHUNK_CHARS <= WorkspaceStore.MAX_CHUNK_CHARS)
         // Отчёт на 200 КБ должен помещаться в хранилище целиком, иначе резать нечего.

@@ -98,6 +98,7 @@ class ToolRegistry(
         ToolInfo("search_file", "Найти в файле", "Ищет строки по подстроке в большом файле", "Файлы", "search", ToolRisk.READ_ONLY),
         ToolInfo("write_file", "Записать файл", "Создаёт текстовый или JSON-файл", "Файлы", "note_add", ToolRisk.CHANGES_DEVICE),
         ToolInfo("send_file", "Отправить файл", "Передаёт файл вам через меню «Поделиться»", "Файлы", "attach_file", ToolRisk.CHANGES_DEVICE),
+        ToolInfo("create_zip", "Собрать архив", "Упаковывает файлы рабочей папки в zip", "Файлы", "folder_zip", ToolRisk.CHANGES_DEVICE),
         ToolInfo("upload_file", "Файл на сервер", "Кладёт файл из рабочей папки на сервер по SFTP", "Файлы", "cloud_upload", ToolRisk.CHANGES_DEVICE),
         ToolInfo("download_file", "Файл с сервера", "Забирает файл с сервера в рабочую папку", "Файлы", "cloud_download", ToolRisk.READ_ONLY)
     )
@@ -160,6 +161,14 @@ class ToolRegistry(
         ))
         put(schema("write_file", "Создать или перезаписать текстовый либо JSON-файл в рабочей папке", props("name" to "string", "content" to "string"), listOf("name", "content")))
         put(schema("send_file", "Передать пользователю файл из рабочей папки через системное меню отправки", props("name" to "string"), listOf("name")))
+        put(schema(
+            "create_zip",
+            "Собрать zip-архив из файлов рабочей папки. Дальше архив отправляют пользователю через send_file или кладут на сервер через upload_file.",
+            JSONObject()
+                .put("name", JSONObject().put("type", "string"))
+                .put("files", JSONObject().put("type", "array").put("items", JSONObject().put("type", "string"))),
+            listOf("name", "files")
+        ))
         put(schema(
             "upload_file",
             "Положить файл из рабочей папки на сервер по SFTP. Так на сервер отдают отчёты: через ssh_exec содержимое не передать, оно не поместится в команду.",
@@ -307,6 +316,15 @@ class ToolRegistry(
                     )
                 }
             }
+            "create_zip" -> {
+                val list = args.optJSONArray("files") ?: error("Не указаны файлы для архива")
+                val names = List(list.length()) { list.optString(it) }.filter { it.isNotBlank() }
+                val archive = workspace.archive(args.string("name"), names)
+                done(
+                    "Архив ${archive.name} собран: ${names.size} файлов, ${archive.bytes} байт. " +
+                        "Отправить пользователю — send_file, положить на сервер — upload_file."
+                )
+            }
             // Передача файлов идёт по тому же гранту, что и команды: закреплённый за задачей
             // профиль. Подтверждение здесь спрашивается ровно там же, где у ssh_exec.
             "upload_file" -> {
@@ -384,6 +402,7 @@ class ToolRegistry(
     private fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
         "json" -> "application/json"
         "csv" -> "text/csv"
+        "zip" -> "application/zip"
         else -> "text/plain"
     }
 
