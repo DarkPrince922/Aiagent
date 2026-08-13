@@ -21,6 +21,7 @@ import app.jarvis.data.PromptComposer
 import app.jarvis.data.ProviderSettings
 import app.jarvis.data.SettingsStore
 import app.jarvis.data.SshProfileStore
+import app.jarvis.data.WorkspaceStore
 import app.jarvis.data.readinessError
 import app.jarvis.net.ApiMessage
 import app.jarvis.net.ApiToolCall
@@ -48,7 +49,8 @@ class AutonomousAgentManager(
     private val profiles: SshProfileStore,
     private val api: LanguageModel,
     private val tools: ToolRegistry,
-    private val notifications: AgentNotifications
+    private val notifications: AgentNotifications,
+    private val workspace: WorkspaceStore = WorkspaceStore(context)
 ) {
     private val workManager = WorkManager.getInstance(context)
 
@@ -388,6 +390,14 @@ class AutonomousAgentManager(
 $selected
 Доступные SSH-профили (без секретов):
 ${tools.sshContext()}
+
+ОБМЕН ФАЙЛАМИ С ПОЛЬЗОВАТЕЛЕМ.
+- Пользователь кладёт файлы в рабочую папку; смотри их через list_files, читай через read_file.
+- Большой файл read_file отдаёт окнами: в ответе есть общий размер и offset следующего куска.
+  Дочитывай повторными вызовами, а не делай вывод по началу файла. Поиск — search_file.
+- Чтобы отдать результат файлом: write_file, затем send_file. Файл придёт пользователю
+  уведомлением, подтверждения не нужно и ждать его не надо.
+${workspaceContext()}
 Текущие дата и время: ${ZonedDateTime.now()}"""
         // Инструкция пользователя идёт отдельным системным сообщением и дословно; правила
         // задачи — служебным блоком после неё, чтобы не подменять собой основную инструкцию.
@@ -396,6 +406,18 @@ ${tools.sshContext()}
             PromptComposer.service(taskRules),
             ApiMessage("user", goal)
         )
+    }
+
+    /**
+     * Что уже лежит в рабочей папке на момент постановки задачи.
+     *
+     * Без этого агент не знает, что файл вообще есть: задача ставится текстом, и «разбери
+     * отчёт» без имени файла ему не за что зацепить.
+     */
+    private fun workspaceContext(): String {
+        val files = workspace.list()
+        if (files.isEmpty()) return "Сейчас рабочая папка пуста."
+        return "Сейчас в рабочей папке:\n" + files.take(30).joinToString("\n") { "- ${it.name} (${it.bytes} байт)" }
     }
 
     private fun waitForNetwork(taskId: String, error: String) {

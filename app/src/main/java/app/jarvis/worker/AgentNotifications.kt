@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.net.Uri
 import android.os.Build
 import androidx.work.ForegroundInfo
 import app.jarvis.MainActivity
@@ -115,6 +116,37 @@ class AgentNotifications(context: Context) {
         runCatching { manager.notify(DOWNLOAD_RESULT_NOTIFICATION_ID, notification) }
     }
 
+    /**
+     * Файл от автономной задачи.
+     *
+     * Открыть «Поделиться» прямо из задачи нельзя: Android 10+ запрещает фоновый запуск
+     * активности, а задача как раз и работает при закрытом приложении. Поэтому кладём
+     * готовый chooser в уведомление — нажатие делает пользователь, и запрет не действует.
+     */
+    fun notifyFileReady(name: String, uri: Uri, mime: String) {
+        val share = Intent.createChooser(
+            Intent(Intent.ACTION_SEND)
+                .setType(mime)
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+            "Файл от Jarvis"
+        )
+        val pending = PendingIntent.getActivity(
+            app,
+            name.hashCode(),
+            share.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = Notification.Builder(app, RESULT_CHANNEL)
+            .setContentTitle("Файл от агента: $name")
+            .setContentText("Нажмите, чтобы открыть или отправить")
+            .setSmallIcon(R.drawable.ic_agent_status)
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+        runCatching { manager.notify(fileNotificationId(name), notification) }
+    }
+
     private fun download(title: String, downloaded: Long, total: Long?): Notification {
         val builder = Notification.Builder(app, PROGRESS_CHANNEL)
             .setContentTitle(title.ifBlank { "Загрузка модели" })
@@ -161,6 +193,8 @@ class AgentNotifications(context: Context) {
     // startForeground не принимает id 0, поэтому диапазон начинается с единицы.
     private fun notificationId(taskId: String) = (taskId.hashCode() and 0x7FFF) + 1
     private fun resultNotificationId(taskId: String) = (taskId.hashCode() and 0x7FFF) + 0x8001
+    /** Свой диапазон: файл не должен затирать ни прогресс задачи, ни её результат. */
+    private fun fileNotificationId(name: String) = (name.hashCode() and 0x3FFF) + 0x10001
 
     companion object {
         const val PROGRESS_CHANNEL = "jarvis_agent_progress"

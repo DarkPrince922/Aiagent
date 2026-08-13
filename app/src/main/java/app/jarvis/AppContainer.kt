@@ -47,5 +47,6 @@ class AppContainer(context: Context) {
             val task = autonomous.start(objective, sshProfileId, autoApproveSsh = sshProfileId != null)
             "Автономная задача запущена: ${task.title}. Следите на вкладке «Агент»; результат придёт уведомлением."
         }
+        tools.fileDelivery = { name, uri, mime -> notifications.notifyFileReady(name, uri, mime) }
     }
 }

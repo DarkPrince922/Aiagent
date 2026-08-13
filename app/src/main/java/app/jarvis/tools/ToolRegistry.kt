@@ -67,6 +67,12 @@ class ToolRegistry(
      * в конструктор нельзя — получилась бы циклическая зависимость.
      */
     var autonomousLauncher: ((objective: String, sshProfileId: String?) -> String)? = null
+
+    /**
+     * Выдача файла пользователю из автономной задачи. Ставится контейнером по той же причине,
+     * что и [autonomousLauncher]: доставка идёт через уведомления агента.
+     */
+    var fileDelivery: ((name: String, uri: Uri, mime: String) -> Unit)? = null
     val catalog = listOf(
         ToolInfo("web_search", "Поиск в интернете", "Ищет актуальные источники", "Интернет", "travel_explore", ToolRisk.READ_ONLY),
         ToolInfo("web_fetch", "Чтение страницы", "Извлекает текст HTTPS-страницы", "Интернет", "language", ToolRisk.READ_ONLY),
@@ -265,17 +271,27 @@ class ToolRegistry(
                 val file = workspace.resolve(args.string("name"))
                 require(file.isFile) { "Файл ${args.string("name")} не найден" }
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                confirmIntent(
-                    confirmed,
-                    "Отправить вам файл ${file.name}?",
-                    Intent.createChooser(
-                        Intent(Intent.ACTION_SEND)
-                            .setType(mimeOf(file.name))
-                            .putExtra(Intent.EXTRA_STREAM, uri)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                        "Файл от Jarvis"
+                // Автономная задача работает в фоне, а Android 10+ запрещает оттуда открывать
+                // активности: chooser просто не появился бы. Отдаём файл уведомлением, которое
+                // пользователь открывает сам. Подтверждения тут не спрашиваем — задача не
+                // может его дождаться, а отправка файла из собственной папки не опасна.
+                if (execution.autonomous) {
+                    val deliver = fileDelivery ?: error("Доставка файлов недоступна")
+                    deliver(file.name, uri, mimeOf(file.name))
+                    done("Файл ${file.name} (${file.length()} байт) отправлен пользователю уведомлением")
+                } else {
+                    confirmIntent(
+                        confirmed,
+                        "Отправить вам файл ${file.name}?",
+                        Intent.createChooser(
+                            Intent(Intent.ACTION_SEND)
+                                .setType(mimeOf(file.name))
+                                .putExtra(Intent.EXTRA_STREAM, uri)
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                            "Файл от Jarvis"
+                        )
                     )
-                )
+                }
             }
             // Рекурсивный запуск задач из самой задачи запрещён: это прямой путь к лавине.
             "start_autonomous_task" -> if (execution.autonomous) {
