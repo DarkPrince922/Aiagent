@@ -131,8 +131,8 @@ import app.jarvis.data.ProviderSettings
         }
         item {
             ListItem(
-                headlineContent = { Text("Согласовать инструкцию в начале чата") },
-                supportingContent = { Text("В начале диалога модель получает голую инструкцию без служебных приписок, подтверждает своими словами режим работы, и только потом идёт запрос. Ответ берётся один раз на чат и обновляется, когда вы правите инструкцию") },
+                headlineContent = { Text("Знакомство в начале чата") },
+                supportingContent = { Text("Сначала модель получает только эту инструкцию — без инструментов и служебных приписок — и отвечает на неё. Затем получает служебные правила и инструменты и отвечает на них. И только потом идёт ваше задание. Оба ответа берутся один раз на чат и переспрашиваются, когда вы правите инструкцию или меняете набор инструментов") },
                 leadingContent = { Icon(Icons.Default.Handshake, null) },
                 trailingContent = { Switch(value.primePrompt, { value = value.copy(primePrompt = it) }) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)

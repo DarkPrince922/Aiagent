@@ -73,16 +73,14 @@ class ChatRepository(
             limited
         }
         settings.readinessError?.let { throw IllegalArgumentException(it) }
+        val service = PromptComposer.service(
+            if (settings.toolsEnabled && settings.answerBeforeTools) ANSWER_FIRST_PROTOCOL else null,
+            "Текущие локальные дата и время: ${ZonedDateTime.now()}",
+            "Сохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}",
+            "Рабочая папка обмена файлами: ${workspaceHint()}"
+        )
         val messages = buildList {
-            // Голая инструкция, затем собственное подтверждение модели, и только потом
-            // служебная обвязка приложения — отдельным и явно подчинённым блоком.
-            addAll(PromptComposer.opening(settings.systemPrompt, primingAck(settings, conversationId, onProgress)))
-            PromptComposer.service(
-                if (settings.toolsEnabled && settings.answerBeforeTools) ANSWER_FIRST_PROTOCOL else null,
-                "Текущие локальные дата и время: ${ZonedDateTime.now()}",
-                "Сохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}",
-                "Рабочая папка обмена файлами: ${workspaceHint()}"
-            )?.let { add(it) }
+            addAll(introduce(settings, conversationId, service, onProgress))
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
         runAgent(settings, messages, shouldContinue, onProgress, onInterim, onSummary)
@@ -296,27 +294,55 @@ class ChatRepository(
             "и offset следующего куска — дочитывай повторными вызовами, а не делай вывод по началу файла"
 
     /**
-     * Подтверждение инструкции от самой модели.
+     * Знакомство в два приёма перед первым заданием.
      *
-     * Небольшая модель на своём сервере читает служебные указания приложения наравне с
-     * основной инструкцией. Собственный ответ «принял, работаю так-то» держит её заметно
-     * сильнее любого текста от приложения, поэтому он берётся один раз на диалог и дальше
-     * лежит в контексте. Запрос идёт без инструментов: подтверждать нечего исполнять.
+     * Сначала модель получает только инструкцию из настроек — без инструментов и без
+     * служебных приписок — и отвечает на неё. Затем получает служебные правила вместе со
+     * схемами инструментов и отвечает уже на них. Задание идёт третьим.
      *
-     * Неудача не блокирует сообщение — работаем без подтверждения.
+     * Оба ответа берутся один раз на диалог и переспрашиваются сами: первый — когда
+     * изменилась инструкция, второй — ещё и когда изменился набор инструментов.
+     * Неудача не блокирует сообщение: работаем с тем, что успели получить.
      */
-    private fun primingAck(settings: ProviderSettings, conversationId: String?, onProgress: (String) -> Unit): String? {
-        if (!settings.primePrompt || conversationId == null || settings.systemPrompt.isBlank()) return null
-        ackStore.get(conversationId, settings.systemPrompt)?.let { return it }
-        onProgress("Согласую инструкцию")
-        return runCatching {
-            api.complete(
-                settings.copy(toolsEnabled = false),
-                PromptComposer.priming(settings.systemPrompt),
-                org.json.JSONArray()
-            ).text.trim().takeIf { it.isNotBlank() }
-        }.getOrNull()?.also { ackStore.save(conversationId, settings.systemPrompt, it) }
+    private fun introduce(
+        settings: ProviderSettings,
+        conversationId: String?,
+        service: ApiMessage?,
+        onProgress: (String) -> Unit
+    ): List<ApiMessage> {
+        val plain = PromptComposer.opening(settings.systemPrompt, null, service, null)
+        if (!settings.primePrompt || conversationId == null || settings.systemPrompt.isBlank()) return plain
+
+        val instructionPrint = PromptComposer.fingerprint(settings.systemPrompt)
+        val instructionAck = ackStore.get(conversationId, PromptAckStore.Slot.INSTRUCTION, instructionPrint)
+            ?: run {
+                onProgress("Отправляю инструкцию")
+                answerOf(settings, PromptComposer.instructionRound(settings.systemPrompt), org.json.JSONArray())
+                    ?.also { ackStore.save(conversationId, PromptAckStore.Slot.INSTRUCTION, instructionPrint, it) }
+            } ?: return plain
+
+        if (service == null) return PromptComposer.opening(settings.systemPrompt, instructionAck, null, null)
+
+        val schemas = if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray()
+        // Дата в служебном блоке меняется каждый раз, поэтому отпечаток берётся по составу:
+        // инструкция, набор инструментов и режимы. Иначе знакомство шло бы на каждое сообщение.
+        val servicePrint = PromptComposer.fingerprint(
+            settings.systemPrompt,
+            schemas.toString(),
+            settings.answerBeforeTools.toString()
+        )
+        val serviceAck = ackStore.get(conversationId, PromptAckStore.Slot.SERVICE, servicePrint)
+            ?: run {
+                onProgress("Передаю правила и инструменты")
+                answerOf(settings, PromptComposer.serviceRound(settings.systemPrompt, instructionAck, service), schemas)
+                    ?.also { ackStore.save(conversationId, PromptAckStore.Slot.SERVICE, servicePrint, it) }
+            }
+        return PromptComposer.opening(settings.systemPrompt, instructionAck, service, serviceAck)
     }
+
+    /** Ход знакомства: нужен только текст. Вызовы инструментов здесь игнорируются. */
+    private fun answerOf(settings: ProviderSettings, request: List<ApiMessage>, schemas: org.json.JSONArray): String? =
+        runCatching { api.complete(settings, request, schemas).text.trim() }.getOrNull()?.takeIf { it.isNotBlank() }
 
     /** У локального движка лишний запрос стоит минут, поэтому там правило только объявляется. */
     private fun enforcesAnswerFirst(settings: ProviderSettings): Boolean =

@@ -3,32 +3,37 @@ package app.jarvis.data
 import android.content.Context
 
 /**
- * Подтверждение инструкции, полученное от модели.
+ * Ответы модели на знакомство: отдельно на инструкцию, отдельно на служебные правила.
  *
- * Берётся один раз на диалог, а не на каждое сообщение: это лишний запрос, и на своём
- * сервере он стоит времени. Привязано к содержимому инструкции — поправил промт, и старое
- * подтверждение перестаёт годиться само, без ручного сброса.
+ * Берутся один раз на диалог, а не на каждое сообщение: на своём сервере лишний запрос стоит
+ * времени. Каждый привязан к своему отпечатку, поэтому правка инструкции переспрашивает оба,
+ * а изменение набора инструментов — только второй.
  */
 class PromptAckStore(context: Context) {
     private val prefs = context.getSharedPreferences("prompt_ack", Context.MODE_PRIVATE)
 
-    fun get(conversationId: String, instruction: String): String? {
-        val expected = PromptComposer.fingerprint(instruction)
-        if (prefs.getString(fingerprintKey(conversationId), null) != expected) return null
-        return prefs.getString(textKey(conversationId), null)?.takeIf { it.isNotBlank() }
+    fun get(conversationId: String, slot: Slot, fingerprint: String): String? {
+        if (prefs.getString(key(conversationId, slot, "fp"), null) != fingerprint) return null
+        return prefs.getString(key(conversationId, slot, "text"), null)?.takeIf { it.isNotBlank() }
     }
 
-    fun save(conversationId: String, instruction: String, ack: String) {
+    fun save(conversationId: String, slot: Slot, fingerprint: String, ack: String) {
         prefs.edit()
-            .putString(fingerprintKey(conversationId), PromptComposer.fingerprint(instruction))
-            .putString(textKey(conversationId), ack.trim())
+            .putString(key(conversationId, slot, "fp"), fingerprint)
+            .putString(key(conversationId, slot, "text"), ack.trim())
             .apply()
     }
 
     fun clear(conversationId: String) {
-        prefs.edit().remove(fingerprintKey(conversationId)).remove(textKey(conversationId)).apply()
+        val editor = prefs.edit()
+        Slot.entries.forEach { slot ->
+            editor.remove(key(conversationId, slot, "fp")).remove(key(conversationId, slot, "text"))
+        }
+        editor.apply()
     }
 
-    private fun fingerprintKey(conversationId: String) = "fp:$conversationId"
-    private fun textKey(conversationId: String) = "ack:$conversationId"
+    private fun key(conversationId: String, slot: Slot, suffix: String) =
+        "${slot.name.lowercase()}:$suffix:$conversationId"
+
+    enum class Slot { INSTRUCTION, SERVICE }
 }

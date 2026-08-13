@@ -8,17 +8,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Инструкция пользователя — единственное, что отличает его ассистента от любого другого.
- * Склеенная в один блок со служебными указаниями приложения, у небольшой своей модели она
- * читается наравне с ними и перестаёт работать: «отвечает не по промту».
+ * Знакомство идёт тремя ходами: инструкция и ответ на неё, служебные правила и ответ на них,
+ * и только потом задание. Слипание первых двух в один блок — та самая причина, по которой
+ * своя небольшая модель отвечает «не по промту».
  */
 class PromptComposerTest {
     private val instruction = "Ты Jarvis. Отвечай кратко и по-русски."
-
-    private fun conversation(messages: Int, size: Int = 100) = buildList {
-        add(PromptComposer.instruction(instruction))
-        repeat(messages) { add(ApiMessage("user", "x".repeat(size))) }
-    }
+    private val service = PromptComposer.service("Дата: сегодня", "SSH: нет")
 
     @Test fun instructionGoesOutVerbatimWithNothingAppended() {
         val message = PromptComposer.instruction(instruction)
@@ -26,11 +22,27 @@ class PromptComposerTest {
         assertEquals(instruction, message.content)
     }
 
+    @Test fun theFirstRoundCarriesTheInstructionAloneWithNoServiceText() {
+        val round = PromptComposer.instructionRound(instruction)
+        assertEquals(2, round.size)
+        assertEquals(instruction, round[0].content)
+        assertEquals(PromptComposer.INSTRUCTION_QUESTION, round[1].content)
+        assertTrue("В первом ходе не должно быть служебного блока", round.none { PromptComposer.isService(it) })
+        assertTrue(round.none { it.role == "assistant" })
+    }
+
+    @Test fun theSecondRoundAddsServiceOnlyAfterTheInstructionWasAnswered() {
+        val round = PromptComposer.serviceRound(instruction, "Принял.", service)
+        assertEquals(5, round.size)
+        assertEquals(instruction, round[0].content)
+        assertEquals(PromptComposer.INSTRUCTION_QUESTION, round[1].content)
+        assertEquals("assistant", round[2].role)
+        assertTrue(PromptComposer.isService(round[3]))
+        assertEquals(PromptComposer.SERVICE_QUESTION, round[4].content)
+    }
+
     @Test fun serviceBlockIsSeparateAndSubordinate() {
-        val service = PromptComposer.service("Дата: сегодня", "SSH: нет")!!
-        assertEquals("system", service.role)
-        assertTrue(service.content!!.startsWith(PromptComposer.SERVICE_HEADER))
-        assertTrue(service.content.contains("Дата: сегодня"))
+        assertTrue(service!!.content!!.startsWith(PromptComposer.SERVICE_HEADER))
         assertFalse("Инструкция не должна попадать в служебный блок", service.content.contains(instruction))
     }
 
@@ -39,63 +51,64 @@ class PromptComposerTest {
     }
 
     @Test fun serviceIsRecognisedByHeaderNotByPosition() {
-        assertTrue(PromptComposer.isService(PromptComposer.service("что-то")!!))
+        assertTrue(PromptComposer.isService(service!!))
         assertFalse(PromptComposer.isService(PromptComposer.instruction(instruction)))
         assertFalse(PromptComposer.isService(ApiMessage("user", "привет")))
     }
 
-    @Test fun openingWithoutAcknowledgementIsJustTheInstruction() {
-        val opening = PromptComposer.opening(instruction, null)
-        assertEquals(1, opening.size)
-        assertEquals(instruction, opening.single().content)
-    }
-
-    @Test fun openingKeepsTheModelsOwnAcknowledgement() {
-        val opening = PromptComposer.opening(instruction, "Принял, работаю кратко и по-русски.")
-        assertEquals(3, opening.size)
+    @Test fun fullOpeningKeepsBothAnswersInOrder() {
+        val opening = PromptComposer.opening(instruction, "Принял инструкцию.", service, "Принял правила.")
+        assertEquals(6, opening.size)
         assertEquals(instruction, opening[0].content)
-        assertEquals(PromptComposer.PRIMING_QUESTION, opening[1].content)
-        assertEquals("assistant", opening[2].role)
-        assertEquals("Принял, работаю кратко и по-русски.", opening[2].content)
+        assertEquals("Принял инструкцию.", opening[2].content)
+        assertTrue(PromptComposer.isService(opening[3]))
+        assertEquals("Принял правила.", opening[5].content)
+        assertEquals(6, PromptComposer.preludeSize(opening))
     }
 
-    @Test fun primingAsksWithoutInventingAnAnswer() {
-        val priming = PromptComposer.priming(instruction)
-        assertEquals(2, priming.size)
-        assertEquals(instruction, priming[0].content)
-        assertEquals("user", priming[1].role)
-        assertTrue(priming.none { it.role == "assistant" })
+    /** Вопрос без ответа сбивает модель сильнее, чем его отсутствие. */
+    @Test fun withoutAnswersNoQuestionsAreSentAtAll() {
+        val opening = PromptComposer.opening(instruction, null, service, null)
+        assertEquals(2, opening.size)
+        assertEquals(instruction, opening[0].content)
+        assertTrue(PromptComposer.isService(opening[1]))
+        assertTrue(opening.none { it.content == PromptComposer.INSTRUCTION_QUESTION })
     }
 
-    @Test fun editingTheInstructionInvalidatesTheOldAcknowledgement() {
+    @Test fun serviceQuestionIsDroppedWhenItsAnswerIsMissing() {
+        val opening = PromptComposer.opening(instruction, "Принял.", service, null)
+        assertEquals(PromptComposer.SERVICE_QUESTION, opening.last().content)
+        assertTrue("Не должно быть выдуманного ответа", opening.count { it.role == "assistant" } == 1)
+    }
+
+    @Test fun openingWithoutAnyServiceIsJustTheFirstRound() {
+        val opening = PromptComposer.opening(instruction, "Принял.", null, null)
+        assertEquals(3, opening.size)
+        assertEquals("Принял.", opening[2].content)
+    }
+
+    @Test fun editingTheInstructionInvalidatesTheOldAnswer() {
         assertEquals(PromptComposer.fingerprint(instruction), PromptComposer.fingerprint("  $instruction  "))
         assertFalse(PromptComposer.fingerprint(instruction) == PromptComposer.fingerprint("$instruction Ещё правило."))
     }
 
-    @Test fun preludeCoversInstructionAcknowledgementAndService() {
-        val messages = PromptComposer.opening(instruction, "Принял.") +
-            PromptComposer.service("Дата: сегодня")!! +
-            ApiMessage("user", "привет") +
-            ApiMessage("assistant", "здравствуйте")
-        assertEquals(4, PromptComposer.preludeSize(messages))
+    @Test fun theServiceFingerprintAlsoFollowsTheToolSet() {
+        val a = PromptComposer.fingerprint(instruction, "[read_file]", "true")
+        val b = PromptComposer.fingerprint(instruction, "[read_file,web_search]", "true")
+        assertFalse(a == b)
     }
 
-    @Test fun preludeOfABareInstructionIsJustTheInstruction() {
-        assertEquals(1, PromptComposer.preludeSize(conversation(3)))
+    @Test fun preludeStopsAtTheFirstRealMessage() {
+        val messages = PromptComposer.opening(instruction, "Принял.", service, "Принял.") +
+            ApiMessage("user", "привет") + ApiMessage("assistant", "здравствуйте")
+        assertEquals(6, PromptComposer.preludeSize(messages))
     }
 
-    @Test fun shortExchangeGetsNoReminder() {
-        val messages = conversation(2)
-        assertFalse(PromptComposer.needsReminder(messages))
-        assertEquals(messages, PromptComposer.withReminder(messages, instruction))
-    }
-
-    @Test fun longExchangeGetsTheReminderLast() {
-        val messages = conversation(8)
-        val withReminder = PromptComposer.withReminder(messages, instruction)
-        assertEquals(messages.size + 1, withReminder.size)
-        assertEquals("system", withReminder.last().role)
-        assertTrue(withReminder.last().content!!.contains(instruction))
+    @Test fun reminderCountsTheConversationNotThePrelude() {
+        val opening = PromptComposer.opening(instruction, "Принял.", service, "Принял.")
+        assertFalse("Само знакомство не повод напоминать", PromptComposer.needsReminder(opening))
+        val long = opening + List(8) { ApiMessage("user", "x") }
+        assertTrue(PromptComposer.needsReminder(long))
     }
 
     /** Один большой результат инструмента отодвигает инструкцию не хуже десятка сообщений. */
@@ -109,26 +122,25 @@ class PromptComposerTest {
     }
 
     @Test fun forcedReminderIgnoresLength() {
-        val forced = PromptComposer.withReminder(conversation(1), instruction, force = true)
+        val forced = PromptComposer.withReminder(PromptComposer.instructionRound(instruction), instruction, force = true)
         assertTrue(forced.last().content!!.contains(instruction))
     }
 
     @Test fun reminderIsSkippedWhenThereIsNoInstruction() {
-        val messages = conversation(20)
+        val messages = listOf(ApiMessage("user", "x"))
         assertEquals(messages, PromptComposer.withReminder(messages, "   ", force = true))
     }
 
     @Test fun onlyTheServiceBlockIsEverClamped() {
-        val service = PromptComposer.service("с".repeat(50_000))!!.content!!
-        val clamped = PromptComposer.clampService(service, limit = 1_000)
+        val long = PromptComposer.service("с".repeat(50_000))!!.content!!
+        val clamped = PromptComposer.clampService(long, limit = 1_000)
         assertTrue(clamped.startsWith(PromptComposer.SERVICE_HEADER))
         assertTrue(clamped.contains("сокращена"))
         assertTrue(clamped.length < 1_200)
     }
 
     @Test fun clampLeavesShortBlocksUntouched() {
-        val service = PromptComposer.service("Дата: сегодня")!!.content!!
-        assertEquals(service, PromptComposer.clampService(service, limit = 24_000))
+        assertEquals(service!!.content, PromptComposer.clampService(service.content!!, limit = 24_000))
     }
 
     @Test fun anEmptyInstructionStillProducesAUsableSystemMessage() {
