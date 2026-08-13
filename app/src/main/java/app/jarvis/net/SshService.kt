@@ -3,6 +3,7 @@ package app.jarvis.net
 import app.jarvis.data.SshProfile
 import app.jarvis.data.SshProfileStore
 import com.jcraft.jsch.ChannelExec
+import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.HostKey
 import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.JSch
@@ -40,6 +41,60 @@ class SshService(private val profiles: SshProfileStore) {
             executeDirect(profile, command, shouldContinue)
         } else {
             executeTracked(profile, command, operationId, shouldContinue)
+        }
+    }
+
+    /**
+     * Кладёт файл на сервер по SFTP.
+     *
+     * Через `ssh_exec` этого не сделать: содержимое пришлось бы вставлять прямо в команду,
+     * а лимит команды — восемь тысяч символов. Отчёт на сотни килобайт туда не поместится
+     * ни в каком виде, поэтому передача идёт отдельным каналом.
+     */
+    fun upload(
+        profile: SshProfile,
+        remotePath: String,
+        bytes: ByteArray,
+        shouldContinue: () -> Boolean = { true }
+    ): SshResult = withSftp(profile, shouldContinue) { sftp, fingerprint ->
+        val parent = remotePath.substringBeforeLast('/', "")
+        if (parent.isNotBlank()) runCatching { sftp.stat(parent) }
+            .onFailure { throw JSchException("Каталог $parent недоступен: ${it.message}") }
+        sftp.put(bytes.inputStream(), remotePath, ChannelSftp.OVERWRITE)
+        val size = runCatching { sftp.stat(remotePath).size }.getOrDefault(bytes.size.toLong())
+        SshResult("Файл записан: $remotePath, $size байт", 0, fingerprint)
+    }
+
+    /** Забирает файл с сервера. Размер ограничен: в контекст модели он всё равно пойдёт кусками. */
+    fun download(
+        profile: SshProfile,
+        remotePath: String,
+        maxBytes: Int,
+        shouldContinue: () -> Boolean = { true }
+    ): ByteArray = withSftp(profile, shouldContinue) { sftp, _ ->
+        val size = runCatching { sftp.stat(remotePath).size }.getOrElse {
+            throw JSchException("Файл $remotePath недоступен: ${it.message}")
+        }
+        require(size <= maxBytes) { "Файл $size байт, лимит $maxBytes" }
+        sftp.get(remotePath).use { it.readBytes() }
+    }
+
+    private fun <T> withSftp(
+        profile: SshProfile,
+        shouldContinue: () -> Boolean,
+        action: (ChannelSftp, String) -> T
+    ): T {
+        val connection = connectWithRetry(profile, shouldContinue)
+        return try {
+            val channel = connection.session.openChannel("sftp") as ChannelSftp
+            try {
+                channel.connect(CONNECT_TIMEOUT_MS)
+                action(channel, connection.fingerprint)
+            } finally {
+                channel.disconnect()
+            }
+        } finally {
+            connection.session.disconnect()
         }
     }
 

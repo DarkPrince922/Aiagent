@@ -97,7 +97,9 @@ class ToolRegistry(
         ToolInfo("read_file", "Прочитать файл", "Читает текстовый или JSON-файл из рабочей папки", "Файлы", "description", ToolRisk.READ_ONLY),
         ToolInfo("search_file", "Найти в файле", "Ищет строки по подстроке в большом файле", "Файлы", "search", ToolRisk.READ_ONLY),
         ToolInfo("write_file", "Записать файл", "Создаёт текстовый или JSON-файл", "Файлы", "note_add", ToolRisk.CHANGES_DEVICE),
-        ToolInfo("send_file", "Отправить файл", "Передаёт файл вам через меню «Поделиться»", "Файлы", "attach_file", ToolRisk.CHANGES_DEVICE)
+        ToolInfo("send_file", "Отправить файл", "Передаёт файл вам через меню «Поделиться»", "Файлы", "attach_file", ToolRisk.CHANGES_DEVICE),
+        ToolInfo("upload_file", "Файл на сервер", "Кладёт файл из рабочей папки на сервер по SFTP", "Файлы", "cloud_upload", ToolRisk.CHANGES_DEVICE),
+        ToolInfo("download_file", "Файл с сервера", "Забирает файл с сервера в рабочую папку", "Файлы", "cloud_download", ToolRisk.READ_ONLY)
     )
 
     /**
@@ -158,6 +160,18 @@ class ToolRegistry(
         ))
         put(schema("write_file", "Создать или перезаписать текстовый либо JSON-файл в рабочей папке", props("name" to "string", "content" to "string"), listOf("name", "content")))
         put(schema("send_file", "Передать пользователю файл из рабочей папки через системное меню отправки", props("name" to "string"), listOf("name")))
+        put(schema(
+            "upload_file",
+            "Положить файл из рабочей папки на сервер по SFTP. Так на сервер отдают отчёты: через ssh_exec содержимое не передать, оно не поместится в команду.",
+            props("profile" to "string", "name" to "string", "remote_path" to "string"),
+            listOf("profile", "name", "remote_path")
+        ))
+        put(schema(
+            "download_file",
+            "Забрать файл с сервера по SFTP в рабочую папку. Дальше его читают через read_file окнами.",
+            props("profile" to "string", "remote_path" to "string", "name" to "string"),
+            listOf("profile", "remote_path")
+        ))
         // Автономная задача не может порождать автономные задачи, поэтому там инструмента просто нет.
         if (!autonomous) {
             put(schema(
@@ -291,6 +305,31 @@ class ToolRegistry(
                             "Файл от Jarvis"
                         )
                     )
+                }
+            }
+            // Передача файлов идёт по тому же гранту, что и команды: закреплённый за задачей
+            // профиль. Подтверждение здесь спрашивается ровно там же, где у ssh_exec.
+            "upload_file" -> {
+                val profile = profiles.find(args.string("profile")) ?: error("SSH-профиль не найден")
+                val file = workspace.resolve(args.string("name"))
+                require(file.isFile) { "Файл ${args.string("name")} не найден в рабочей папке" }
+                val remote = args.string("remote_path")
+                val granted = execution.autonomous && execution.allowedSshProfileId == profile.id
+                dangerous(confirmed || granted, "Записать ${file.name} на ${profile.name}:$remote?") {
+                    require(profile.fingerprint.isNotBlank()) { "Сначала проверьте профиль и закрепите fingerprint хоста" }
+                    ssh.upload(profile, remote, file.readBytes(), execution.shouldContinue).output
+                }
+            }
+            "download_file" -> {
+                val profile = profiles.find(args.string("profile")) ?: error("SSH-профиль не найден")
+                val remote = args.string("remote_path")
+                val granted = execution.autonomous && execution.allowedSshProfileId == profile.id
+                dangerous(confirmed || granted, "Забрать $remote с ${profile.name}?") {
+                    require(profile.fingerprint.isNotBlank()) { "Сначала проверьте профиль и закрепите fingerprint хоста" }
+                    val name = args.optString("name").ifBlank { remote.substringAfterLast('/') }
+                    val bytes = ssh.download(profile, remote, WorkspaceStore.MAX_FILE_BYTES, execution.shouldContinue)
+                    val saved = workspace.store(name, bytes)
+                    "Сохранено в рабочую папку: ${saved.name}, ${saved.bytes} байт. Читай через read_file."
                 }
             }
             // Рекурсивный запуск задач из самой задачи запрещён: это прямой путь к лавине.
