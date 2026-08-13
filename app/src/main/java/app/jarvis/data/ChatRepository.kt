@@ -341,12 +341,14 @@ class ChatRepository(
         if (!settings.primePrompt || conversationId == null || settings.systemPrompt.isBlank()) return plain
 
         val instructionPrint = PromptComposer.fingerprint(settings.systemPrompt)
-        val instructionAck = ackStore.get(conversationId, PromptAckStore.Slot.INSTRUCTION, instructionPrint)
-            ?: run {
-                onProgress("Отправляю инструкцию")
-                answerOf(settings, PromptComposer.instructionRound(settings.systemPrompt, asUser), org.json.JSONArray())
-                    ?.also { ackStore.save(conversationId, PromptAckStore.Slot.INSTRUCTION, instructionPrint, it) }
-            } ?: return plain
+        val instructionAck = ackStore.handshake(conversationId, PromptAckStore.Slot.INSTRUCTION, instructionPrint) {
+            onProgress("Отправляю инструкцию")
+            answerOf(settings, PromptComposer.instructionRound(settings.systemPrompt, asUser), org.json.JSONArray())
+                // Запрос из одних системных сообщений часть серверов не принимает вовсе:
+                // им нужен ход пользователя. Повторяем, отправив инструкцию ещё и им —
+                // это по-прежнему текст пользователя, приложение своего не добавляет.
+                ?: answerOf(settings, PromptComposer.instructionRound(settings.systemPrompt, alsoAsUser = true), org.json.JSONArray())
+        } ?: return plain
 
         if (service == null) return PromptComposer.opening(settings.systemPrompt, instructionAck, null, null, asUser)
 
@@ -359,12 +361,10 @@ class ChatRepository(
             settings.answerBeforeTools.toString(),
             asUser.toString()
         )
-        val serviceAck = ackStore.get(conversationId, PromptAckStore.Slot.SERVICE, servicePrint)
-            ?: run {
-                onProgress("Передаю правила и инструменты")
-                answerOf(settings, PromptComposer.serviceRound(settings.systemPrompt, instructionAck, service, asUser), schemas)
-                    ?.also { ackStore.save(conversationId, PromptAckStore.Slot.SERVICE, servicePrint, it) }
-            }
+        val serviceAck = ackStore.handshake(conversationId, PromptAckStore.Slot.SERVICE, servicePrint) {
+            onProgress("Передаю правила и инструменты")
+            answerOf(settings, PromptComposer.serviceRound(settings.systemPrompt, instructionAck, service, asUser), schemas)
+        }
         return PromptComposer.opening(settings.systemPrompt, instructionAck, service, serviceAck, asUser)
     }
 
