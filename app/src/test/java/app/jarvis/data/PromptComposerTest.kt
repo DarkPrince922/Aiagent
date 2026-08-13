@@ -141,6 +141,26 @@ class PromptComposerTest {
         assertEquals(service!!.content, PromptComposer.clampService(service.content!!, limit = 24_000))
     }
 
+    /** Обход для серверов, подменяющих системное сообщение своим. */
+    @Test fun theDuplicateCarriesTheInstructionUnchangedAsAUserTurn() {
+        val round = PromptComposer.instructionRound(instruction, alsoAsUser = true)
+        assertEquals(2, round.size)
+        assertEquals("system", round[0].role)
+        assertEquals("user", round[1].role)
+        assertEquals("Дубль должен быть дословным", instruction, round[1].content)
+    }
+
+    @Test fun theDuplicateDoesNotCutTheIntroductionShortWhenTrimming() {
+        val opening = PromptComposer.opening(instruction, "Принял.", service, "Принял.", alsoAsUser = true)
+        val messages = opening + ApiMessage("user", "привет")
+        assertEquals(opening.size, PromptComposer.preludeSize(messages, instruction))
+    }
+
+    @Test fun aRealUserMessageStillEndsThePrelude() {
+        val messages = PromptComposer.instructionRound(instruction, alsoAsUser = true) + ApiMessage("user", "привет")
+        assertEquals(2, PromptComposer.preludeSize(messages, instruction))
+    }
+
     @Test fun anEmptyInstructionStillProducesAUsableSystemMessage() {
         assertTrue(PromptComposer.instruction("   ").content!!.isNotBlank())
     }

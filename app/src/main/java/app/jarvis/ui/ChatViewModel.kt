@@ -34,6 +34,9 @@ data class ChatState(
     val attachments: List<String> = emptyList(),
     /** Инструменты выключены в настройках: агент не сможет ни читать файлы, ни ходить в сеть. */
     val toolsDisabled: Boolean = false,
+    /** Результат проверки «доходит ли инструкция до модели»; null — проверка не запускалась. */
+    val promptCheck: PromptInspection? = null,
+    val promptChecking: Boolean = false,
     val banner: String? = null
 ) {
     val activeTitle: String get() = conversations.firstOrNull { it.id == activeConversationId }?.title ?: "Новый чат"
@@ -204,6 +207,20 @@ class ChatViewModel(
         viewModelScope.launch {
             val check = withContext(Dispatchers.IO) { repository.checkConnection(settings) }
             mutable.value = mutable.value.copy(apiStatus = if (check.ok) ApiStatus.ONLINE else ApiStatus.ERROR, statusText = check.message, banner = if (check.ok) null else check.message)
+        }
+    }
+
+    /**
+     * Проверяет, доходит ли инструкция до модели.
+     *
+     * Отдельная кнопка нужна потому, что «отвечает не по промту» одинаково выглядит и когда
+     * приложение отправило не то, и когда сервер подменил системное сообщение своим.
+     */
+    fun checkPrompt(settings: ProviderSettings = repository.settings()) {
+        mutable.value = mutable.value.copy(promptChecking = true, promptCheck = null)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { repository.inspectPrompt(settings) }
+            mutable.value = mutable.value.copy(promptChecking = false, promptCheck = result)
         }
     }
 

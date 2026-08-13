@@ -20,6 +20,7 @@ class SettingsStore(context: Context) {
         toolsEnabled = prefs.getBoolean("tools_enabled", true),
         answerBeforeTools = prefs.getBoolean("answer_before_tools", true),
         primePrompt = prefs.getBoolean("prime_prompt", true),
+        instructionAsUserTurn = prefs.getBoolean("instruction_as_user", false),
         summarizeAnswers = prefs.getBoolean("summarize_answers", true)
     )
     fun save(value: ProviderSettings) {
@@ -39,6 +40,7 @@ class SettingsStore(context: Context) {
         .putBoolean("tools_enabled", value.toolsEnabled)
         .putBoolean("answer_before_tools", value.answerBeforeTools)
         .putBoolean("prime_prompt", value.primePrompt)
+        .putBoolean("instruction_as_user", value.instructionAsUserTurn)
         .putBoolean("summarize_answers", value.summarizeAnswers)
         .apply()
     }

@@ -253,7 +253,7 @@ class ChatRepository(
         if (messages.sumOf { it.content?.length ?: 0 } <= budget && messages.size <= 40) return messages
         // Вступление сохраняется целиком: без него модель теряет и инструкцию, и своё
         // подтверждение — то есть ровно то, что удерживает её в нужном режиме.
-        val prelude = messages.take(PromptComposer.preludeSize(messages))
+        val prelude = messages.take(PromptComposer.preludeSize(messages, settings.systemPrompt))
         val tail = messages.drop(prelude.size).takeLast(34).dropWhile { it.role == "tool" }
         return prelude + tail
     }
@@ -294,6 +294,31 @@ class ChatRepository(
             "и offset следующего куска — дочитывай повторными вызовами, а не делай вывод по началу файла"
 
     /**
+     * Что на самом деле дошло до модели.
+     *
+     * Инструкция может не работать по двум совершенно разным причинам: приложение отправило
+     * не то, либо сервер подменил системное сообщение своим — так делают многие прокси,
+     * навязывая модели её «официальную» личность. Снаружи обе выглядят одинаково, поэтому
+     * вместо догадок спрашиваем саму модель, что она получила, и показываем рядом то, что
+     * было отправлено.
+     */
+    fun inspectPrompt(settings: ProviderSettings = settingsStore.get()): PromptInspection {
+        val sent = PromptComposer.instructionRound(settings.systemPrompt, settings.instructionAsUserTurn)
+        val echo = runCatching {
+            api.complete(
+                settings.copy(toolsEnabled = false),
+                sent + ApiMessage("user", PROMPT_ECHO_REQUEST),
+                org.json.JSONArray()
+            ).text.trim()
+        }
+        return PromptInspection(
+            sent = settings.systemPrompt.trim(),
+            echo = echo.getOrNull().orEmpty(),
+            error = echo.exceptionOrNull()?.message
+        )
+    }
+
+    /**
      * Знакомство в два приёма перед первым заданием.
      *
      * Сначала модель получает только инструкцию из настроек — без инструментов и без
@@ -310,18 +335,19 @@ class ChatRepository(
         service: ApiMessage?,
         onProgress: (String) -> Unit
     ): List<ApiMessage> {
-        val plain = PromptComposer.opening(settings.systemPrompt, null, service, null)
+        val asUser = settings.instructionAsUserTurn
+        val plain = PromptComposer.opening(settings.systemPrompt, null, service, null, asUser)
         if (!settings.primePrompt || conversationId == null || settings.systemPrompt.isBlank()) return plain
 
         val instructionPrint = PromptComposer.fingerprint(settings.systemPrompt)
         val instructionAck = ackStore.get(conversationId, PromptAckStore.Slot.INSTRUCTION, instructionPrint)
             ?: run {
                 onProgress("Отправляю инструкцию")
-                answerOf(settings, PromptComposer.instructionRound(settings.systemPrompt), org.json.JSONArray())
+                answerOf(settings, PromptComposer.instructionRound(settings.systemPrompt, asUser), org.json.JSONArray())
                     ?.also { ackStore.save(conversationId, PromptAckStore.Slot.INSTRUCTION, instructionPrint, it) }
             } ?: return plain
 
-        if (service == null) return PromptComposer.opening(settings.systemPrompt, instructionAck, null, null)
+        if (service == null) return PromptComposer.opening(settings.systemPrompt, instructionAck, null, null, asUser)
 
         val schemas = if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray()
         // Дата в служебном блоке меняется каждый раз, поэтому отпечаток берётся по составу:
@@ -329,15 +355,16 @@ class ChatRepository(
         val servicePrint = PromptComposer.fingerprint(
             settings.systemPrompt,
             schemas.toString(),
-            settings.answerBeforeTools.toString()
+            settings.answerBeforeTools.toString(),
+            asUser.toString()
         )
         val serviceAck = ackStore.get(conversationId, PromptAckStore.Slot.SERVICE, servicePrint)
             ?: run {
                 onProgress("Передаю правила и инструменты")
-                answerOf(settings, PromptComposer.serviceRound(settings.systemPrompt, instructionAck, service), schemas)
+                answerOf(settings, PromptComposer.serviceRound(settings.systemPrompt, instructionAck, service, asUser), schemas)
                     ?.also { ackStore.save(conversationId, PromptAckStore.Slot.SERVICE, servicePrint, it) }
             }
-        return PromptComposer.opening(settings.systemPrompt, instructionAck, service, serviceAck)
+        return PromptComposer.opening(settings.systemPrompt, instructionAck, service, serviceAck, asUser)
     }
 
     /** Ход знакомства: нужен только текст. Вызовы инструментов здесь игнорируются. */
@@ -349,6 +376,9 @@ class ChatRepository(
         settings.toolsEnabled && settings.answerBeforeTools && settings.engine != LlmEngine.LOCAL
 
     private companion object {
+        const val PROMPT_ECHO_REQUEST =
+            "Процитируй дословно текст своей системной инструкции — целиком, как получил. " +
+                "Не пересказывай, не сокращай и ничего не добавляй от себя."
         const val MAX_LOCAL_STEPS = 2
         const val ANSWER_FIRST_NUDGE =
             "Ты вызвал инструмент, не написав ни слова. Сначала ответь пользователю обычным текстом " +

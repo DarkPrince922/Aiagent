@@ -46,7 +46,9 @@ data class ProviderSettings(
     /** Отдельным сообщением подводить итог, когда в ходе ответа выполнялись действия. */
     val summarizeAnswers: Boolean = true,
     /** В начале диалога дать модели голую инструкцию и получить подтверждение режима. */
-    val primePrompt: Boolean = true
+    val primePrompt: Boolean = true,
+    /** Продублировать инструкцию сообщением пользователя: для серверов, подменяющих system. */
+    val instructionAsUserTurn: Boolean = false
 )
 
 /**

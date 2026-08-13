@@ -138,7 +138,47 @@ import app.jarvis.data.ProviderSettings
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
+        item {
+            ListItem(
+                headlineContent = { Text("Дублировать инструкцию сообщением пользователя") },
+                supportingContent = { Text("Для серверов, которые подменяют системное сообщение собственным промтом: инструкция уходит ещё и как обычное сообщение — его прокси обычно не трогают. Включайте, если проверка ниже показала, что инструкция не доходит") },
+                leadingContent = { Icon(Icons.Default.RepeatOne, null) },
+                trailingContent = { Switch(value.instructionAsUserTurn, { value = value.copy(instructionAsUserTurn = it) }) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
         item { SettingsField { OutlinedTextField(value.systemPrompt, { value = value.copy(systemPrompt = it) }, Modifier.fillMaxWidth(), label = { Text("Системная инструкция") }, leadingIcon = { Icon(Icons.Default.Psychology, null) }, minLines = 5, maxLines = 12) } }
+        item {
+            SettingsField {
+                Column(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { vm.checkPrompt(value) },
+                        enabled = !state.promptChecking,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (state.promptChecking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Policy, null)
+                        Spacer(Modifier.width(7.dp))
+                        Text("Проверить, доходит ли инструкция")
+                    }
+                    state.promptCheck?.let { check ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            check.verdict,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (check.delivered) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text("Модель процитировала:", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            check.echo.ifBlank { "—" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
         item { SectionTitle("Безопасность", Icons.Default.Security) }
         item { ListItem(headlineContent = { Text("Будильники и таймеры") }, supportingContent = { Text("Разрешение SET_ALARM выдаётся Android при установке") }, leadingContent = { Icon(Icons.Default.AlarmOn, null, tint = MaterialTheme.colorScheme.primary) }, trailingContent = { Icon(Icons.Default.CheckCircle, "Разрешено", tint = MaterialTheme.colorScheme.primary) }) }
         item { ListItem(headlineContent = { Text("Календарь, карты, звонки и почта") }, supportingContent = { Text("Открываются в системных приложениях с вашим подтверждением") }, leadingContent = { Icon(Icons.Default.Apps, null, tint = MaterialTheme.colorScheme.primary) }) }
