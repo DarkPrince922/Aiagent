@@ -30,7 +30,11 @@ object ChatMlPrompt {
             val message = messages[index]
             when (message.role) {
                 "system" -> {
-                    builder.turn("system", system(message.content.orEmpty(), toolSchemas))
+                    // Список инструментов уходит только в первый системный блок: напоминание
+                    // об инструкции приходит тем же ролью, а второй раз перечислять схемы —
+                    // это лишние тысячи токенов prefill на каждом шаге.
+                    val schemas = if (systemWritten) JSONArray() else toolSchemas
+                    builder.turn("system", system(message.content.orEmpty(), schemas))
                     systemWritten = true
                     index++
                 }

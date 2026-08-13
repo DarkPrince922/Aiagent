@@ -17,6 +17,7 @@ import app.jarvis.data.AgentTaskStore
 import app.jarvis.data.ConversationStore
 import app.jarvis.data.LlmEngine
 import app.jarvis.data.Message
+import app.jarvis.data.PromptComposer
 import app.jarvis.data.ProviderSettings
 import app.jarvis.data.SettingsStore
 import app.jarvis.data.SshProfileStore
@@ -160,13 +161,25 @@ class AutonomousAgentManager(
                         messages = compacted
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Контекст сжат; ключевые события сохранены")
                     }
-                    val answer = api.complete(currentSettings, messages, tools.schemas(autonomous = true, compact = currentSettings.engine == LlmEngine.LOCAL))
+                    // Первый шаг задачи идёт без инструментов: модель обязана сперва прочитать
+                    // инструкцию и цель и ответить планом текстом, и только потом действовать.
+                    // Это не пожелание в промпте, а отсутствие схем в запросе — обойти нечем.
+                    val planning = messages.none { it.role == "assistant" }
+                    val schemas = if (planning) JSONArray()
+                        else tools.schemas(autonomous = true, compact = currentSettings.engine == LlmEngine.LOCAL)
+                    val request = PromptComposer.withReminder(messages, settings.get().systemPrompt, force = planning)
+                    val answer = api.complete(currentSettings, request, schemas)
                     ensureRunning(taskId, shouldContinue)
                     step++
                     messages = messages + answer.rawMessage
                     store.updateCheckpoint(taskId, encodeMessages(messages), step, answer.text.ifBlank { "Планирую следующий шаг" })
                     if (answer.toolCalls.isEmpty()) {
-                        if (answer.text.isNotBlank()) store.addEvent(taskId, AgentEventKind.PROGRESS, "Промежуточный вывод", answer.text)
+                        if (answer.text.isNotBlank()) {
+                            val title = if (planning) "Ответ и план" else "Промежуточный вывод"
+                            store.addEvent(taskId, AgentEventKind.PROGRESS, title, answer.text)
+                            // Ответ до действий виден в чате, а не только в журнале задачи.
+                            if (planning) store.get(taskId)?.let { mirrorToChat(it, answer.text, "agent-plan:${it.id}") }
+                        }
                         messages = messages + ApiMessage("user", CONTINUE_PROMPT)
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Продолжаю до проверенного результата")
                     } else {
@@ -442,8 +455,15 @@ ${tools.sshContext()}
         val local = settings.engine == LlmEngine.LOCAL
         val toolLimit = if (local) 8_000 else 110_000
         val clipped = input.mapIndexed { index, message ->
-            val limit = if (index == 0) 24_000 else if (message.role == "tool") toolLimit else 14_000
-            if (message.content != null && message.content.length > limit) message.copy(content = message.content.take(limit) + "\n[сокращено]") else message
+            val content = message.content ?: return@mapIndexed message
+            // Инструкция пользователя и цель задачи стоят в начале системного блока и режутся
+            // отдельно: подрезка по общему лимиту отъедала бы их вместе со служебным хвостом.
+            if (index == 0 && message.role == "system") {
+                val clamped = PromptComposer.clampSystem(content, settings.systemPrompt, 24_000)
+                return@mapIndexed if (clamped == content) message else message.copy(content = clamped)
+            }
+            val limit = if (message.role == "tool") toolLimit else 14_000
+            if (content.length > limit) message.copy(content = content.take(limit) + "\n[сокращено]") else message
         }
         if (clipped.sumOf { it.content?.length ?: 0 } <= (if (local) 140_000 else 340_000) && clipped.size <= 60) return clipped
         val first = clipped.firstOrNull()

@@ -7,6 +7,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import app.jarvis.net.ApiAnswer
 import app.jarvis.net.ApiMessage
 import app.jarvis.net.ApiToolCall
 import app.jarvis.net.ChatApi
@@ -71,13 +72,13 @@ class ChatRepository(
         }
         settings.readinessError?.let { throw IllegalArgumentException(it) }
         val messages = buildList {
-            add(ApiMessage("system", buildString {
-                append(settings.systemPrompt)
-                if (settings.toolsEnabled && settings.answerBeforeTools) append("\n\n").append(ANSWER_FIRST_PROTOCOL)
-                append("\nТекущие локальные дата и время: ").append(ZonedDateTime.now())
-                append("\nСохранённые SSH-профили (секреты не передаются):\n").append(tools.sshContext())
-                append("\nРабочая папка обмена файлами: ").append(workspaceHint())
-            }))
+            add(ApiMessage("system", PromptComposer.system(
+                settings.systemPrompt,
+                if (settings.toolsEnabled && settings.answerBeforeTools) ANSWER_FIRST_PROTOCOL else null,
+                "Текущие локальные дата и время: ${ZonedDateTime.now()}",
+                "Сохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}",
+                "Рабочая папка обмена файлами: ${workspaceHint()}"
+            )))
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
         runAgent(settings, messages, shouldContinue, onProgress, onInterim, onSummary)
@@ -162,13 +163,28 @@ class ChatRepository(
             // Локальная модель думает минутами: без этого экран выглядит зависшим.
             onProgress(if (step == 1) "Модель думает" else "Шаг $step: модель думает")
             messages = compactContext(messages, settings)
-            val answer = try {
-                api.complete(settings, messages, if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray())
-            } catch (error: ChatFailure.Http) {
-                val toolRejected = error.status == 400 && (error.serverMessage.contains("tool", true) || error.serverMessage.contains("function", true))
-                if (!toolRejected || !settings.toolsEnabled) throw error
-                fallbackNotice = "Эта модель не приняла tools; ответ получен в обычном режиме."
-                api.complete(settings.copy(toolsEnabled = false), messages, org.json.JSONArray())
+            val schemas = if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray()
+            fun ask(extra: String? = null): ApiAnswer {
+                val request = PromptComposer.withReminder(messages, settings.systemPrompt)
+                    .let { if (extra == null) it else it + ApiMessage("system", extra) }
+                return try {
+                    api.complete(settings, request, schemas)
+                } catch (error: ChatFailure.Http) {
+                    val toolRejected = error.status == 400 &&
+                        (error.serverMessage.contains("tool", true) || error.serverMessage.contains("function", true))
+                    if (!toolRejected || !settings.toolsEnabled) throw error
+                    fallbackNotice = "Эта модель не приняла tools; ответ получен в обычном режиме."
+                    api.complete(settings.copy(toolsEnabled = false), request, org.json.JSONArray())
+                }
+            }
+            var answer = ask()
+            // Инструкцию «сначала ответь текстом» модель может проигнорировать, поэтому она
+            // проверяется, а не только объявляется: на первом шаге молчаливый вызов инструмента
+            // переспрашиваем. Дальше молчание нормально — там уже идёт продолжение начатого.
+            // Локальный движок исключён: лишний запрос стоит там минут ожидания.
+            if (step == 1 && enforcesAnswerFirst(settings) && answer.text.isBlank() && answer.toolCalls.isNotEmpty()) {
+                onProgress("Прошу сначала ответить текстом")
+                answer = ask(ANSWER_FIRST_NUDGE)
             }
             messages = messages + answer.rawMessage
             if (answer.text.isNotBlank()) assistantOutputs++
@@ -202,7 +218,9 @@ class ChatRepository(
     }
 
     private fun synthesize(settings: ProviderSettings, messages: List<ApiMessage>, notice: String?, reason: String): AgentReply = runCatching {
-        val finalMessages = compactContext(messages, settings) + ApiMessage("user", "Сформируй лучший итоговый ответ по уже полученным результатам. Не вызывай инструменты. Честно укажи, что осталось незавершённым. Причина завершения: $reason")
+        // Итоговый текст пользователь и читает, поэтому инструкция повторяется здесь всегда.
+        val finalMessages = PromptComposer.withReminder(compactContext(messages, settings), settings.systemPrompt, force = true) +
+            ApiMessage("user", "Сформируй лучший итоговый ответ по уже полученным результатам. Не вызывай инструменты. Честно укажи, что осталось незавершённым. Причина завершения: $reason")
         val answer = api.complete(settings.copy(toolsEnabled = false), finalMessages, org.json.JSONArray())
         AgentReply(answer.text.ifBlank { reason }, notice = notice)
     }.getOrElse { AgentReply("$reason. Не удалось сформировать итог: ${it.message}", notice = notice) }
@@ -219,8 +237,15 @@ class ChatRepository(
         val systemLimit = if (local) 8_000 else 24_000
         val budget = if (local) 120_000 else 320_000
         var messages = input.mapIndexed { index, message ->
-            val limit = if (index == 0) systemLimit else if (message.role == "tool") toolLimit else textLimit
-            if (message.content != null && message.content.length > limit) message.copy(content = message.content.take(limit) + "\n[сокращено]") else message
+            val content = message.content ?: return@mapIndexed message
+            // Системный блок режется отдельно: у инструкции пользователя откусывался бы хвост,
+            // а там обычно и стоит самое конкретное.
+            if (index == 0 && message.role == "system") {
+                val clamped = PromptComposer.clampSystem(content, settings.systemPrompt, systemLimit)
+                return@mapIndexed if (clamped == content) message else message.copy(content = clamped)
+            }
+            val limit = if (message.role == "tool") toolLimit else textLimit
+            if (content.length > limit) message.copy(content = content.take(limit) + "\n[сокращено]") else message
         }
         if (messages.sumOf { it.content?.length ?: 0 } <= budget && messages.size <= 40) return messages
         val first = messages.firstOrNull()
@@ -248,7 +273,8 @@ class ChatRepository(
         if (toolsUsed == 0 && assistantOutputs < 2) return
         onProgress("Готовлю итог")
         runCatching {
-            val request = compactContext(messages, settings) + ApiMessage("user", SUMMARY_PROMPT)
+            val request = PromptComposer.withReminder(compactContext(messages, settings), settings.systemPrompt, force = true) +
+                ApiMessage("user", SUMMARY_PROMPT)
             api.complete(settings.copy(toolsEnabled = false), request, org.json.JSONArray()).text
         }.onSuccess { text ->
             if (text.isNotBlank()) onSummary(text.trim())
@@ -263,8 +289,16 @@ class ChatRepository(
             "создание — write_file, отправка пользователю — send_file. Большой файл read_file отдаёт окнами: в ответе есть общий размер " +
             "и offset следующего куска — дочитывай повторными вызовами, а не делай вывод по началу файла"
 
+    /** У локального движка лишний запрос стоит минут, поэтому там правило только объявляется. */
+    private fun enforcesAnswerFirst(settings: ProviderSettings): Boolean =
+        settings.toolsEnabled && settings.answerBeforeTools && settings.engine != LlmEngine.LOCAL
+
     private companion object {
         const val MAX_LOCAL_STEPS = 2
+        const val ANSWER_FIRST_NUDGE =
+            "Ты вызвал инструмент, не написав ни слова. Сначала ответь пользователю обычным текстом " +
+                "по основной инструкции: что понято и что собираешься сделать. Вызовы инструментов " +
+                "помести в тот же ответ после текста."
         const val SUMMARY_PROMPT =
             "Подведи итог этого хода отдельным сообщением: что было сделано, что получилось и что осталось. " +
                 "Не вызывай инструменты, не повторяй длинные выдержки, уложись в 5 пунктов."

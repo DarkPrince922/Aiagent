@@ -79,4 +79,22 @@ class ChatMlPromptTest {
         assertTrue(prompt.startsWith("<|im_start|>system\nТы Jarvis<|im_end|>"))
         assertFalse(prompt.contains("# Tools"))
     }
+
+    /**
+     * Напоминание об инструкции приходит той же ролью `system`. Повторять вместе с ним весь
+     * список схем — тысячи токенов prefill на каждом шаге, а на телефоне это прямые минуты.
+     */
+    @Test fun aSecondSystemTurnDoesNotRepeatTheToolBlock() {
+        val prompt = ChatMlPrompt.render(
+            listOf(
+                ApiMessage("system", "Ты Jarvis"),
+                ApiMessage("user", "привет"),
+                ApiMessage("system", "НАПОМИНАНИЕ: Ты Jarvis")
+            ),
+            schemas
+        )
+        assertEquals(1, Regex("# Tools").findAll(prompt).count())
+        assertEquals(1, Regex("web_search").findAll(prompt).count())
+        assertTrue(prompt.contains("<|im_start|>system\nНАПОМИНАНИЕ: Ты Jarvis<|im_end|>"))
+    }
 }
