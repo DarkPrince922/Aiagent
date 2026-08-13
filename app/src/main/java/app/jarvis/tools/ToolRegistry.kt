@@ -206,7 +206,32 @@ class ToolRegistry(
                     put(JSONObject().put("name", file.name).put("bytes", file.bytes).put("modified", Instant.ofEpochMilli(file.modifiedAt).toString()))
                 }
             }.toString().let { if (it == "[]") "Рабочая папка пуста" else it })
-            "read_file" -> done(workspace.read(args.string("name")))
+            "read_file" -> {
+                val chunk = workspace.readChunk(
+                    args.string("name"),
+                    args.optInt("offset", 0),
+                    args.optInt("limit", WorkspaceStore.DEFAULT_CHUNK_CHARS)
+                )
+                done(buildString {
+                    append("Файл: ").append(chunk.name).append('\n')
+                    append("Всего: ").append(chunk.totalChars).append(" символов, ").append(chunk.totalLines).append(" строк\n")
+                    append("Показано: ").append(chunk.offset).append("..").append(chunk.nextOffset).append('\n')
+                    if (chunk.hasMore) {
+                        append("Осталось ").append(chunk.totalChars - chunk.nextOffset)
+                        append(" символов. Продолжить: read_file с offset=").append(chunk.nextOffset).append('\n')
+                    } else {
+                        append("Это конец файла.\n")
+                    }
+                    append("---\n").append(chunk.text)
+                })
+            }
+            "search_file" -> {
+                val hits = workspace.search(args.string("name"), args.string("query"), args.optInt("limit", 40))
+                done(
+                    if (hits.isEmpty()) "Совпадений не найдено"
+                    else hits.joinToString("\n") { "строка ${it.line}: ${it.text}" }
+                )
+            }
             "write_file" -> {
                 val saved = workspace.write(args.string("name"), args.getString("content"))
                 done("Записан файл ${saved.name}, ${saved.bytes} байт. Чтобы передать его пользователю, вызови send_file.")
@@ -260,9 +285,9 @@ class ToolRegistry(
         else -> error is IOException || (error is JSchException && isRetryableSshConnectFailure(error.message.orEmpty()))
     }
 
-    private fun done(content: String) = ToolResult(content.take(64_000))
+    private fun done(content: String) = ToolResult(content.take(MAX_TOOL_OUTPUT))
     private fun dangerous(confirmed: Boolean, prompt: String, action: () -> Any) = if (!confirmed) ToolResult("", true, prompt) else when (val result = action()) {
-        is ToolResult -> result.copy(content = result.content.take(64_000))
+        is ToolResult -> result.copy(content = result.content.take(MAX_TOOL_OUTPUT))
         else -> done(result.toString())
     }
     private fun confirmIntent(confirmed: Boolean, prompt: String, intent: Intent) = dangerous(confirmed, prompt) {
@@ -315,6 +340,8 @@ class ToolRegistry(
     private fun props(vararg values: Pair<String, String>) = JSONObject().apply { values.forEach { (name, type) -> put(name, JSONObject().put("type", type)) } }
     private fun schema(name: String, description: String, properties: JSONObject = JSONObject(), required: List<String> = emptyList()) = JSONObject().put("type", "function").put("function", JSONObject().put("name", name).put("description", description).put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)).put("additionalProperties", false)))
     private companion object {
+        /** Должен вмещать максимальный кусок файла вместе с заголовком. */
+        const val MAX_TOOL_OUTPUT = WorkspaceStore.MAX_CHUNK_CHARS + 2_000
         /**
          * Инструменты, оставленные локальной модели: дешёвые по токенам, с коротким выводом
          * и безопасные. SSH и web_fetch исключены намеренно — их вывод в десятки килобайт
@@ -331,6 +358,7 @@ class ToolRegistry(
             "open_url",
             "list_files",
             "read_file",
+            "search_file",
             "write_file",
             "send_file"
         )

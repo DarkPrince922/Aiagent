@@ -17,6 +17,7 @@ import app.jarvis.data.AgentTaskStore
 import app.jarvis.data.ConversationStore
 import app.jarvis.data.LlmEngine
 import app.jarvis.data.Message
+import app.jarvis.data.ProviderSettings
 import app.jarvis.data.SettingsStore
 import app.jarvis.data.SshProfileStore
 import app.jarvis.data.readinessError
@@ -154,7 +155,7 @@ class AutonomousAgentManager(
                 } else {
                     val currentSettings = settings.get().copy(toolsEnabled = true, unlimitedAgent = true)
                     messages = drainInstructions(taskId, messages, step)
-                    val compacted = compactContext(messages)
+                    val compacted = compactContext(messages, currentSettings)
                     if (compacted != messages) {
                         messages = compacted
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Контекст сжат; ключевые события сохранены")
@@ -437,12 +438,14 @@ ${tools.sshContext()}
         ).any(normalized::contains)
     }
 
-    private fun compactContext(input: List<ApiMessage>): List<ApiMessage> {
+    private fun compactContext(input: List<ApiMessage>, settings: ProviderSettings): List<ApiMessage> {
+        val local = settings.engine == LlmEngine.LOCAL
+        val toolLimit = if (local) 8_000 else 110_000
         val clipped = input.mapIndexed { index, message ->
-            val limit = if (index == 0) 24_000 else if (message.role == "tool") 8_000 else 14_000
+            val limit = if (index == 0) 24_000 else if (message.role == "tool") toolLimit else 14_000
             if (message.content != null && message.content.length > limit) message.copy(content = message.content.take(limit) + "\n[сокращено]") else message
         }
-        if (clipped.sumOf { it.content?.length ?: 0 } <= 140_000 && clipped.size <= 60) return clipped
+        if (clipped.sumOf { it.content?.length ?: 0 } <= (if (local) 140_000 else 340_000) && clipped.size <= 60) return clipped
         val first = clipped.firstOrNull()
         val tail = clipped.takeLast(48).dropWhile { it.role == "tool" }
         return if (first == null || first in tail) tail else listOf(first) + tail

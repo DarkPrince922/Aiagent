@@ -161,7 +161,7 @@ class ChatRepository(
             step++
             // Локальная модель думает минутами: без этого экран выглядит зависшим.
             onProgress(if (step == 1) "Модель думает" else "Шаг $step: модель думает")
-            messages = compactContext(messages)
+            messages = compactContext(messages, settings)
             val answer = try {
                 api.complete(settings, messages, if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray())
             } catch (error: ChatFailure.Http) {
@@ -202,17 +202,27 @@ class ChatRepository(
     }
 
     private fun synthesize(settings: ProviderSettings, messages: List<ApiMessage>, notice: String?, reason: String): AgentReply = runCatching {
-        val finalMessages = compactContext(messages) + ApiMessage("user", "Сформируй лучший итоговый ответ по уже полученным результатам. Не вызывай инструменты. Честно укажи, что осталось незавершённым. Причина завершения: $reason")
+        val finalMessages = compactContext(messages, settings) + ApiMessage("user", "Сформируй лучший итоговый ответ по уже полученным результатам. Не вызывай инструменты. Честно укажи, что осталось незавершённым. Причина завершения: $reason")
         val answer = api.complete(settings.copy(toolsEnabled = false), finalMessages, org.json.JSONArray())
         AgentReply(answer.text.ifBlank { reason }, notice = notice)
     }.getOrElse { AgentReply("$reason. Не удалось сформировать итог: ${it.message}", notice = notice) }
 
-    private fun compactContext(input: List<ApiMessage>): List<ApiMessage> {
+    /**
+     * @param settings нужен из-за движка: у облака контекст на порядок больше телефонного.
+     *   Общий потолок в 6000 символов на результат инструмента резал прочитанный кусок файла
+     *   в тридцать раз — модель видела проценты от отчёта и не понимала, почему.
+     */
+    private fun compactContext(input: List<ApiMessage>, settings: ProviderSettings): List<ApiMessage> {
+        val local = settings.engine == LlmEngine.LOCAL
+        val toolLimit = if (local) 6_000 else 110_000
+        val textLimit = if (local) 12_000 else 24_000
+        val systemLimit = if (local) 8_000 else 24_000
+        val budget = if (local) 120_000 else 320_000
         var messages = input.mapIndexed { index, message ->
-            val limit = if (index == 0) 8_000 else if (message.role == "tool") 6_000 else 12_000
+            val limit = if (index == 0) systemLimit else if (message.role == "tool") toolLimit else textLimit
             if (message.content != null && message.content.length > limit) message.copy(content = message.content.take(limit) + "\n[сокращено]") else message
         }
-        if (messages.sumOf { it.content?.length ?: 0 } <= 120_000 && messages.size <= 40) return messages
+        if (messages.sumOf { it.content?.length ?: 0 } <= budget && messages.size <= 40) return messages
         val first = messages.firstOrNull()
         val tail = messages.takeLast(34).dropWhile { it.role == "tool" }
         messages = if (first == null || first in tail) tail else listOf(first) + tail
@@ -238,7 +248,7 @@ class ChatRepository(
         if (toolsUsed == 0 && assistantOutputs < 2) return
         onProgress("Готовлю итог")
         runCatching {
-            val request = compactContext(messages) + ApiMessage("user", SUMMARY_PROMPT)
+            val request = compactContext(messages, settings) + ApiMessage("user", SUMMARY_PROMPT)
             api.complete(settings.copy(toolsEnabled = false), request, org.json.JSONArray()).text
         }.onSuccess { text ->
             if (text.isNotBlank()) onSummary(text.trim())

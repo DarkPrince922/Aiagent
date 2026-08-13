@@ -6,11 +6,27 @@ import java.io.File
 data class WorkspaceFile(val name: String, val bytes: Long, val modifiedAt: Long)
 
 /**
+ * Кусок файла с координатами: по ним модель понимает, что осталось и откуда продолжать.
+ */
+data class FileChunk(
+    val name: String,
+    val text: String,
+    val offset: Int,
+    val totalChars: Int,
+    val totalLines: Int
+) {
+    val nextOffset: Int get() = offset + text.length
+    val hasMore: Boolean get() = nextOffset < totalChars
+}
+
+data class FileMatch(val line: Int, val text: String)
+
+/**
  * Папка обмена файлами между пользователем и агентом.
  *
  * Лежит внутри приложения: читать и писать туда можно без разрешений, а на Android 11+
  * это единственный каталог, доступный по обычному пути. Пользователь кладёт файлы через
- * системное «Поделиться», агент — через инструменты.
+ * системное «Поделиться» или кнопку в чате, агент — через инструменты.
  */
 class WorkspaceStore(context: Context) {
     private val root = File(context.getExternalFilesDir(null) ?: context.filesDir, "workspace")
@@ -25,17 +41,42 @@ class WorkspaceStore(context: Context) {
 
     fun resolve(name: String): File = File(directory(), safeName(name))
 
-    fun read(name: String, limit: Int = MAX_READ_CHARS): String {
-        val file = resolve(name)
-        require(file.isFile) { "Файл $name не найден" }
-        require(file.length() <= MAX_FILE_BYTES) { "Файл больше ${MAX_FILE_BYTES / 1024} КБ" }
-        val text = file.readText(Charsets.UTF_8)
-        return if (text.length <= limit) text else text.take(limit) + "\n[сокращено]"
+    /**
+     * Читает окно файла.
+     *
+     * Отчёт на двести килобайт целиком в один ответ модели не помещается и помещаться не
+     * должен — вместо молчаливой обрезки отдаём срез и его координаты, чтобы агент мог
+     * дочитать остальное или прыгнуть к нужному месту через [search].
+     */
+    fun readChunk(name: String, offset: Int = 0, limit: Int = DEFAULT_CHUNK_CHARS): FileChunk {
+        val text = load(name)
+        val start = offset.coerceIn(0, text.length)
+        val size = limit.coerceIn(1_000, MAX_CHUNK_CHARS)
+        val end = (start + size).coerceAtMost(text.length)
+        return FileChunk(
+            name = resolve(name).name,
+            text = text.substring(start, end),
+            offset = start,
+            totalChars = text.length,
+            totalLines = text.count { it == '\n' } + 1
+        )
+    }
+
+    /** Поиск по строкам: для большого отчёта дешевле найти нужное, чем вычитывать всё. */
+    fun search(name: String, query: String, maxHits: Int = 40): List<FileMatch> {
+        require(query.isNotBlank()) { "Пустой поисковый запрос" }
+        val hits = mutableListOf<FileMatch>()
+        load(name).lineSequence().forEachIndexed { index, line ->
+            if (hits.size < maxHits && line.contains(query, ignoreCase = true)) {
+                hits += FileMatch(index + 1, line.trim().take(500))
+            }
+        }
+        return hits
     }
 
     fun write(name: String, content: String): WorkspaceFile {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_FILE_BYTES) {
-            "Содержимое больше ${MAX_FILE_BYTES / 1024} КБ"
+            "Содержимое больше ${MAX_FILE_BYTES / (1024 * 1024)} МБ"
         }
         val file = resolve(name)
         file.writeText(content, Charsets.UTF_8)
@@ -44,9 +85,9 @@ class WorkspaceStore(context: Context) {
 
     fun delete(name: String): Boolean = resolve(name).delete()
 
-    /** Копирует принятый через «Поделиться» файл; при совпадении имени добавляет суффикс. */
+    /** Копирует принятый файл; при совпадении имени добавляет суффикс. */
     fun store(name: String, bytes: ByteArray): WorkspaceFile {
-        require(bytes.size <= MAX_FILE_BYTES) { "Файл больше ${MAX_FILE_BYTES / 1024} КБ" }
+        require(bytes.size <= MAX_FILE_BYTES) { "Файл больше ${MAX_FILE_BYTES / (1024 * 1024)} МБ" }
         var file = resolve(name)
         var attempt = 1
         while (file.exists() && attempt < 100) {
@@ -59,9 +100,17 @@ class WorkspaceStore(context: Context) {
         return WorkspaceFile(file.name, file.length(), file.lastModified())
     }
 
+    private fun load(name: String): String {
+        val file = resolve(name)
+        require(file.isFile) { "Файл $name не найден" }
+        require(file.length() <= MAX_FILE_BYTES) { "Файл больше ${MAX_FILE_BYTES / (1024 * 1024)} МБ" }
+        return file.readText(Charsets.UTF_8)
+    }
+
     companion object {
-        const val MAX_FILE_BYTES = 512 * 1024
-        const val MAX_READ_CHARS = 40_000
+        const val MAX_FILE_BYTES = 4 * 1024 * 1024
+        const val DEFAULT_CHUNK_CHARS = 30_000
+        const val MAX_CHUNK_CHARS = 120_000
         private val TEXT_EXTENSIONS = setOf("txt", "json", "md", "csv", "log", "yaml", "yml", "xml")
 
         /**
