@@ -259,7 +259,9 @@ class ChatRepository(
     }
 
     private fun workspaceHint(): String =
-        "файлы, которыми обменялись с пользователем; список — list_files, чтение — read_file, создание — write_file, отправка пользователю — send_file"
+        "файлы, которыми обменялись с пользователем; список — list_files, чтение — read_file, поиск по большому файлу — search_file, " +
+            "создание — write_file, отправка пользователю — send_file. Большой файл read_file отдаёт окнами: в ответе есть общий размер " +
+            "и offset следующего куска — дочитывай повторными вызовами, а не делай вывод по началу файла"
 
     private companion object {
         const val MAX_LOCAL_STEPS = 2

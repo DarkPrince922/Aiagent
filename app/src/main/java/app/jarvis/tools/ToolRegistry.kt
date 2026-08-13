@@ -89,12 +89,13 @@ class ToolRegistry(
         ToolInfo("device_status", "Устройство", "Показывает сеть, батарею и память", "Устройство", "phone_android", ToolRisk.READ_ONLY),
         ToolInfo("list_files", "Файлы", "Показывает файлы, которыми вы обменялись с агентом", "Файлы", "folder", ToolRisk.READ_ONLY),
         ToolInfo("read_file", "Прочитать файл", "Читает текстовый или JSON-файл из рабочей папки", "Файлы", "description", ToolRisk.READ_ONLY),
+        ToolInfo("search_file", "Найти в файле", "Ищет строки по подстроке в большом файле", "Файлы", "search", ToolRisk.READ_ONLY),
         ToolInfo("write_file", "Записать файл", "Создаёт текстовый или JSON-файл", "Файлы", "note_add", ToolRisk.CHANGES_DEVICE),
         ToolInfo("send_file", "Отправить файл", "Передаёт файл вам через меню «Поделиться»", "Файлы", "attach_file", ToolRisk.CHANGES_DEVICE)
     )
 
     /**
-     * @param compact оставить только дешёвый набор для локальной модели. Полные 27 схем — это
+     * @param compact оставить только дешёвый набор для локальной модели. Полный список схем — это
      *   больше двух тысяч токенов в каждом промпте: облаку всё равно, а 4B-модель на телефоне
      *   тратит на их prefill больше времени, чем на сам ответ.
      */
@@ -136,6 +137,30 @@ class ToolRegistry(
         put(schema("set_timer", "Подготовить таймер", props("seconds" to "integer", "label" to "string"), listOf("seconds")))
         put(schema("add_calendar_event", "Подготовить событие календаря", props("title" to "string", "start_epoch_ms" to "integer", "end_epoch_ms" to "integer", "location" to "string"), listOf("title", "start_epoch_ms")))
         put(schema("open_app_settings", "Открыть настройки приложения Jarvis"))
+        put(schema("list_files", "Список файлов рабочей папки: имя, размер, время изменения. Отсюда берутся точные имена для read_file."))
+        put(schema(
+            "read_file",
+            "Прочитать окно текстового или JSON-файла из рабочей папки. Большой файл целиком не приходит: ответ содержит общий размер и offset следующего куска — вызывай повторно с этим offset, пока не дойдёшь до конца.",
+            props("name" to "string", "offset" to "integer", "limit" to "integer"),
+            listOf("name")
+        ))
+        put(schema(
+            "search_file",
+            "Найти строки файла, содержащие подстроку. Возвращает номера строк: в отчёте на сотни килобайт это дешевле, чем вычитывать всё через read_file.",
+            props("name" to "string", "query" to "string", "limit" to "integer"),
+            listOf("name", "query")
+        ))
+        put(schema("write_file", "Создать или перезаписать текстовый либо JSON-файл в рабочей папке", props("name" to "string", "content" to "string"), listOf("name", "content")))
+        put(schema("send_file", "Передать пользователю файл из рабочей папки через системное меню отправки", props("name" to "string"), listOf("name")))
+        // Автономная задача не может порождать автономные задачи, поэтому там инструмента просто нет.
+        if (!autonomous) {
+            put(schema(
+                "start_autonomous_task",
+                "Запустить фоновую автономную задачу: она работает до проверенного результата и переживает закрытие приложения. Только для долгой многошаговой работы, обычный ответ так оформлять не нужно.",
+                props("objective" to "string", "ssh_profile" to "string"),
+                listOf("objective")
+            ))
+        }
         if (autonomous) {
             put(schema("record_progress", "Записать в журнал краткий проверяемый результат или важный факт. Не включай скрытые рассуждения.", props("title" to "string", "detail" to "string"), listOf("title")))
             put(schema("finish_task", "Завершить автономную задачу только когда цель фактически достигнута и проверена.", props("summary" to "string", "evidence" to "string"), listOf("summary")))
