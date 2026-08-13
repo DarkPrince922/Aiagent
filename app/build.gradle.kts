@@ -70,3 +70,10 @@ dependencies {
     // Подкладываем настоящую реализацию, иначе всё, что строит JSON, «падает» мимо логики.
     testImplementation("org.json:json:20240303")
 }
+
+// ToolSchemaCoverageTest сверяет исходник ToolRegistry.kt со списком схем. Рабочий каталог
+// тестов задаёт Gradle, и полагаться на него нельзя: тест, который не нашёл файл, молча
+// пропустится и перестанет что-либо охранять. Передаём путь явно.
+tasks.withType<Test>().configureEach {
+    systemProperty("jarvis.moduleDir", projectDir.absolutePath)
+}

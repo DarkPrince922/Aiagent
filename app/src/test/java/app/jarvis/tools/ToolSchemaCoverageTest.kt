@@ -1,7 +1,6 @@
 package app.jarvis.tools
 
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 
@@ -15,16 +14,17 @@ import java.io.File
  */
 class ToolSchemaCoverageTest {
     /**
-     * Рабочий каталог unit-тестов задаёт Gradle, и полагаться на него нельзя — поэтому
-     * поднимаемся вверх, пока не найдём модуль. Не нашли — тест пропускается, а не роняет
-     * сборку из-за расположения файлов.
+     * Путь к модулю приходит из build.gradle.kts, а не из рабочего каталога: тест, который
+     * не нашёл исходник, перестаёт что-либо охранять, поэтому это ошибка, а не пропуск.
      */
-    private val source: File? = generateSequence(File("").absoluteFile) { it.parentFile }
-        .take(5)
-        .flatMap { root ->
-            sequenceOf("", "app/").map { File(root, "${it}src/main/java/app/jarvis/tools/ToolRegistry.kt") }
-        }
-        .firstOrNull { it.isFile }
+    private val source: File = File(
+        System.getProperty("jarvis.moduleDir") ?: File("").absolutePath,
+        "src/main/java/app/jarvis/tools/ToolRegistry.kt"
+    )
+
+    @Test fun theSourceUnderTestIsActuallyReachable() {
+        assertTrue("Не найден ${source.absolutePath} — проверка схем не выполнялась", source.isFile)
+    }
 
     /** Имена веток `when (name)` внутри execute(), включая ветки на несколько имён. */
     private fun handledNames(text: String): Set<String> {
@@ -42,22 +42,25 @@ class ToolSchemaCoverageTest {
     }
 
     @Test fun everyExecutableToolIsDeclaredToTheModel() {
-        assumeTrue("Исходник ToolRegistry.kt не найден относительно ${File("").absolutePath}", source != null)
-        val text = source!!.readText()
+        val text = source.readText()
         val missing = handledNames(text) - declaredNames(text) - IGNORED
         assertTrue("Нет схемы, модель не увидит эти инструменты: ${missing.sorted()}", missing.isEmpty())
     }
 
     @Test fun everyDeclaredToolHasAnImplementation() {
-        assumeTrue(source != null)
-        val text = source!!.readText()
-        val orphans = declaredNames(text) - handledNames(text)
+        val orphans = declaredNames(source.readText()) - handledNames(source.readText())
         assertTrue("Схема есть, обработчика нет: ${orphans.sorted()}", orphans.isEmpty())
     }
 
+    /** Пустой разбор выглядел бы как «расхождений нет», поэтому проверяем, что имена вообще нашлись. */
+    @Test fun theParserFindsSomethingAtAll() {
+        val text = source.readText()
+        assertTrue("Не разобраны ветки execute()", handledNames(text).size > 20)
+        assertTrue("Не разобраны схемы", declaredNames(text).size > 20)
+    }
+
     @Test fun theRegressionItselfIsCovered() {
-        assumeTrue(source != null)
-        val declared = declaredNames(source!!.readText())
+        val declared = declaredNames(source.readText())
         listOf("read_file", "search_file", "list_files", "write_file", "send_file", "start_autonomous_task")
             .forEach { assertTrue("$it снова пропал из схем", it in declared) }
     }
