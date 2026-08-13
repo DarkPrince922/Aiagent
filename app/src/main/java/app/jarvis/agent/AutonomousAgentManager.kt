@@ -377,9 +377,7 @@ class AutonomousAgentManager(
             "За задачей закреплён SSH profile_id=$profileId, name=$profileName. " +
                 if (autoApproveSsh) "SSH-команды на этом профиле заранее разрешены; не проси подтверждения." else "SSH-команды не разрешены."
         }
-        val system = """${settings.get().systemPrompt}
-
-Ты выполняешь долговременную автономную задачу. Работай до фактического и проверенного результата.
+        val taskRules = """Ты выполняешь долговременную автономную задачу. Работай до фактического и проверенного результата.
 ЦЕЛЬ ЗАДАЧИ: $goal
 - Не проси промежуточных подтверждений. Если действие запрещено политикой задачи, выбери другой путь.
 - Перед изменениями сначала изучи состояние; делай резервные копии, когда это разумно; после изменения проверь результат.
@@ -391,7 +389,13 @@ $selected
 Доступные SSH-профили (без секретов):
 ${tools.sshContext()}
 Текущие дата и время: ${ZonedDateTime.now()}"""
-        return listOf(ApiMessage("system", system), ApiMessage("user", goal))
+        // Инструкция пользователя идёт отдельным системным сообщением и дословно; правила
+        // задачи — служебным блоком после неё, чтобы не подменять собой основную инструкцию.
+        return listOfNotNull(
+            PromptComposer.instruction(settings.get().systemPrompt),
+            PromptComposer.service(taskRules),
+            ApiMessage("user", goal)
+        )
     }
 
     private fun waitForNetwork(taskId: String, error: String) {
@@ -454,21 +458,22 @@ ${tools.sshContext()}
     private fun compactContext(input: List<ApiMessage>, settings: ProviderSettings): List<ApiMessage> {
         val local = settings.engine == LlmEngine.LOCAL
         val toolLimit = if (local) 8_000 else 110_000
-        val clipped = input.mapIndexed { index, message ->
-            val content = message.content ?: return@mapIndexed message
-            // Инструкция пользователя и цель задачи стоят в начале системного блока и режутся
-            // отдельно: подрезка по общему лимиту отъедала бы их вместе со служебным хвостом.
-            if (index == 0 && message.role == "system") {
-                val clamped = PromptComposer.clampSystem(content, settings.systemPrompt, 24_000)
-                return@mapIndexed if (clamped == content) message else message.copy(content = clamped)
+        val clipped = input.map { message ->
+            val content = message.content ?: return@map message
+            // Инструкция пользователя не режется: правила задачи лежат в служебном блоке,
+            // и подрезать при переполнении можно только их.
+            if (message.role == "system" && !PromptComposer.isService(message)) return@map message
+            if (PromptComposer.isService(message)) {
+                val clamped = PromptComposer.clampService(content, 24_000)
+                return@map if (clamped == content) message else message.copy(content = clamped)
             }
             val limit = if (message.role == "tool") toolLimit else 14_000
             if (content.length > limit) message.copy(content = content.take(limit) + "\n[сокращено]") else message
         }
         if (clipped.sumOf { it.content?.length ?: 0 } <= (if (local) 140_000 else 340_000) && clipped.size <= 60) return clipped
-        val first = clipped.firstOrNull()
-        val tail = clipped.takeLast(48).dropWhile { it.role == "tool" }
-        return if (first == null || first in tail) tail else listOf(first) + tail
+        val prelude = clipped.take(PromptComposer.preludeSize(clipped))
+        val tail = clipped.drop(prelude.size).takeLast(48).dropWhile { it.role == "tool" }
+        return prelude + tail
     }
 
     private fun encodeMessages(messages: List<ApiMessage>): String = JSONArray().apply {

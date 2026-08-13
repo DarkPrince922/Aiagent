@@ -129,6 +129,15 @@ import app.jarvis.data.ProviderSettings
                 Slider(value.agentSteps.toFloat(), { value = value.copy(agentSteps = it.toInt()) }, valueRange = 1f..20f, steps = 18)
             }
         }
+        item {
+            ListItem(
+                headlineContent = { Text("Согласовать инструкцию в начале чата") },
+                supportingContent = { Text("В начале диалога модель получает голую инструкцию без служебных приписок, подтверждает своими словами режим работы, и только потом идёт запрос. Ответ берётся один раз на чат и обновляется, когда вы правите инструкцию") },
+                leadingContent = { Icon(Icons.Default.Handshake, null) },
+                trailingContent = { Switch(value.primePrompt, { value = value.copy(primePrompt = it) }) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
         item { SettingsField { OutlinedTextField(value.systemPrompt, { value = value.copy(systemPrompt = it) }, Modifier.fillMaxWidth(), label = { Text("Системная инструкция") }, leadingIcon = { Icon(Icons.Default.Psychology, null) }, minLines = 5, maxLines = 12) } }
         item { SectionTitle("Безопасность", Icons.Default.Security) }
         item { ListItem(headlineContent = { Text("Будильники и таймеры") }, supportingContent = { Text("Разрешение SET_ALARM выдаётся Android при установке") }, leadingContent = { Icon(Icons.Default.AlarmOn, null, tint = MaterialTheme.colorScheme.primary) }, trailingContent = { Icon(Icons.Default.CheckCircle, "Разрешено", tint = MaterialTheme.colorScheme.primary) }) }

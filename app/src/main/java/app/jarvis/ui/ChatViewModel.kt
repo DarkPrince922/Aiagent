@@ -153,6 +153,7 @@ class ChatViewModel(
                 repository.titleFromFirstMessage(conversationId, text)
                 repository.send(
                     history,
+                    conversationId = conversationId,
                     shouldContinue = flag::get,
                     onProgress = { note -> if (flag.get()) mutable.value = mutable.value.copy(statusText = note) },
                     onInterim = { text -> if (flag.get()) addAssistantMessage(conversationId, text, null) },

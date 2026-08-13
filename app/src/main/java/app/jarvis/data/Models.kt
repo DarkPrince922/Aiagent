@@ -44,7 +44,9 @@ data class ProviderSettings(
     /** Сначала ответить пользователю текстом, и только потом вызывать инструменты. */
     val answerBeforeTools: Boolean = true,
     /** Отдельным сообщением подводить итог, когда в ходе ответа выполнялись действия. */
-    val summarizeAnswers: Boolean = true
+    val summarizeAnswers: Boolean = true,
+    /** В начале диалога дать модели голую инструкцию и получить подтверждение режима. */
+    val primePrompt: Boolean = true
 )
 
 /**

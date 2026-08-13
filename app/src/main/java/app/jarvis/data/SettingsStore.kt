@@ -19,6 +19,7 @@ class SettingsStore(context: Context) {
         unlimitedAgent = prefs.getBoolean("unlimited_agent", false),
         toolsEnabled = prefs.getBoolean("tools_enabled", true),
         answerBeforeTools = prefs.getBoolean("answer_before_tools", true),
+        primePrompt = prefs.getBoolean("prime_prompt", true),
         summarizeAnswers = prefs.getBoolean("summarize_answers", true)
     )
     fun save(value: ProviderSettings) {
@@ -37,6 +38,7 @@ class SettingsStore(context: Context) {
         .putBoolean("unlimited_agent", value.unlimitedAgent)
         .putBoolean("tools_enabled", value.toolsEnabled)
         .putBoolean("answer_before_tools", value.answerBeforeTools)
+        .putBoolean("prime_prompt", value.primePrompt)
         .putBoolean("summarize_answers", value.summarizeAnswers)
         .apply()
     }

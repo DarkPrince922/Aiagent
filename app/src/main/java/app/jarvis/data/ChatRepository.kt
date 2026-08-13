@@ -36,7 +36,8 @@ class ChatRepository(
     private val pendingStore: PendingStore,
     private val conversationStore: ConversationStore,
     private val api: LanguageModel,
-    private val tools: ToolRegistry
+    private val tools: ToolRegistry,
+    private val ackStore: PromptAckStore = PromptAckStore(context)
 ) {
     fun settings() = settingsStore.get()
     /** Прерывает счёт локальной модели: без этого следующий запрос ждёт освобождения движка. */
@@ -55,6 +56,7 @@ class ChatRepository(
 
     fun send(
         history: List<Message>,
+        conversationId: String? = null,
         shouldContinue: () -> Boolean = { true },
         allowUnlimited: Boolean = true,
         onProgress: (String) -> Unit = {},
@@ -72,13 +74,15 @@ class ChatRepository(
         }
         settings.readinessError?.let { throw IllegalArgumentException(it) }
         val messages = buildList {
-            add(ApiMessage("system", PromptComposer.system(
-                settings.systemPrompt,
+            // Голая инструкция, затем собственное подтверждение модели, и только потом
+            // служебная обвязка приложения — отдельным и явно подчинённым блоком.
+            addAll(PromptComposer.opening(settings.systemPrompt, primingAck(settings, conversationId, onProgress)))
+            PromptComposer.service(
                 if (settings.toolsEnabled && settings.answerBeforeTools) ANSWER_FIRST_PROTOCOL else null,
                 "Текущие локальные дата и время: ${ZonedDateTime.now()}",
                 "Сохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}",
                 "Рабочая папка обмена файлами: ${workspaceHint()}"
-            )))
+            )?.let { add(it) }
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
         runAgent(settings, messages, shouldContinue, onProgress, onInterim, onSummary)
@@ -129,7 +133,7 @@ class ChatRepository(
                 val restoredHistory = conversationStore.messages(item.conversationId).map { message ->
                     if (message.detail == "queue:${item.id}") message.copy(state = DeliveryState.SENT, detail = null) else message
                 }.ifEmpty { listOf(Message(role = "user", text = item.text)) }
-                val reply = send(restoredHistory, allowUnlimited = false).getOrThrow()
+                val reply = send(restoredHistory, conversationId = item.conversationId, allowUnlimited = false).getOrThrow()
                 pendingStore.complete(item.id, reply.text + if (reply.pending != null) "\nОткройте Jarvis и повторите команду для подтверждения действия." else "")
             } catch (error: ChatFailure.Transport) {
                 return true
@@ -236,22 +240,24 @@ class ChatRepository(
         val textLimit = if (local) 12_000 else 24_000
         val systemLimit = if (local) 8_000 else 24_000
         val budget = if (local) 120_000 else 320_000
-        var messages = input.mapIndexed { index, message ->
-            val content = message.content ?: return@mapIndexed message
-            // Системный блок режется отдельно: у инструкции пользователя откусывался бы хвост,
-            // а там обычно и стоит самое конкретное.
-            if (index == 0 && message.role == "system") {
-                val clamped = PromptComposer.clampSystem(content, settings.systemPrompt, systemLimit)
-                return@mapIndexed if (clamped == content) message else message.copy(content = clamped)
+        var messages = input.map { message ->
+            val content = message.content ?: return@map message
+            // Инструкция пользователя не режется никогда; урезать можно только то,
+            // что дописало само приложение.
+            if (message.role == "system" && !PromptComposer.isService(message)) return@map message
+            if (PromptComposer.isService(message)) {
+                val clamped = PromptComposer.clampService(content, systemLimit)
+                return@map if (clamped == content) message else message.copy(content = clamped)
             }
             val limit = if (message.role == "tool") toolLimit else textLimit
             if (content.length > limit) message.copy(content = content.take(limit) + "\n[сокращено]") else message
         }
         if (messages.sumOf { it.content?.length ?: 0 } <= budget && messages.size <= 40) return messages
-        val first = messages.firstOrNull()
-        val tail = messages.takeLast(34).dropWhile { it.role == "tool" }
-        messages = if (first == null || first in tail) tail else listOf(first) + tail
-        return messages
+        // Вступление сохраняется целиком: без него модель теряет и инструкцию, и своё
+        // подтверждение — то есть ровно то, что удерживает её в нужном режиме.
+        val prelude = messages.take(PromptComposer.preludeSize(messages))
+        val tail = messages.drop(prelude.size).takeLast(34).dropWhile { it.role == "tool" }
+        return prelude + tail
     }
 
     /**
@@ -288,6 +294,29 @@ class ChatRepository(
         "файлы, которыми обменялись с пользователем; список — list_files, чтение — read_file, поиск по большому файлу — search_file, " +
             "создание — write_file, отправка пользователю — send_file. Большой файл read_file отдаёт окнами: в ответе есть общий размер " +
             "и offset следующего куска — дочитывай повторными вызовами, а не делай вывод по началу файла"
+
+    /**
+     * Подтверждение инструкции от самой модели.
+     *
+     * Небольшая модель на своём сервере читает служебные указания приложения наравне с
+     * основной инструкцией. Собственный ответ «принял, работаю так-то» держит её заметно
+     * сильнее любого текста от приложения, поэтому он берётся один раз на диалог и дальше
+     * лежит в контексте. Запрос идёт без инструментов: подтверждать нечего исполнять.
+     *
+     * Неудача не блокирует сообщение — работаем без подтверждения.
+     */
+    private fun primingAck(settings: ProviderSettings, conversationId: String?, onProgress: (String) -> Unit): String? {
+        if (!settings.primePrompt || conversationId == null || settings.systemPrompt.isBlank()) return null
+        ackStore.get(conversationId, settings.systemPrompt)?.let { return it }
+        onProgress("Согласую инструкцию")
+        return runCatching {
+            api.complete(
+                settings.copy(toolsEnabled = false),
+                PromptComposer.priming(settings.systemPrompt),
+                org.json.JSONArray()
+            ).text.trim().takeIf { it.isNotBlank() }
+        }.getOrNull()?.also { ackStore.save(conversationId, settings.systemPrompt, it) }
+    }
 
     /** У локального движка лишний запрос стоит минут, поэтому там правило только объявляется. */
     private fun enforcesAnswerFirst(settings: ProviderSettings): Boolean =
