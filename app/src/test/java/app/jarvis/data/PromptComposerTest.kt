@@ -22,23 +22,20 @@ class PromptComposerTest {
         assertEquals(instruction, message.content)
     }
 
-    @Test fun theFirstRoundCarriesTheInstructionAloneWithNoServiceText() {
+    /** Ни служебного текста, ни приписки «прочитай и ответь» — модель ответит и так. */
+    @Test fun theFirstRoundIsTheInstructionAndNothingElse() {
         val round = PromptComposer.instructionRound(instruction)
-        assertEquals(2, round.size)
-        assertEquals(instruction, round[0].content)
-        assertEquals(PromptComposer.INSTRUCTION_QUESTION, round[1].content)
-        assertTrue("В первом ходе не должно быть служебного блока", round.none { PromptComposer.isService(it) })
-        assertTrue(round.none { it.role == "assistant" })
+        assertEquals(listOf(PromptComposer.instruction(instruction)), round)
+        assertEquals(instruction, round.single().content)
     }
 
     @Test fun theSecondRoundAddsServiceOnlyAfterTheInstructionWasAnswered() {
         val round = PromptComposer.serviceRound(instruction, "Принял.", service)
-        assertEquals(5, round.size)
+        assertEquals(3, round.size)
         assertEquals(instruction, round[0].content)
-        assertEquals(PromptComposer.INSTRUCTION_QUESTION, round[1].content)
-        assertEquals("assistant", round[2].role)
-        assertTrue(PromptComposer.isService(round[3]))
-        assertEquals(PromptComposer.SERVICE_QUESTION, round[4].content)
+        assertEquals("assistant", round[1].role)
+        assertTrue(PromptComposer.isService(round[2]))
+        assertTrue("Приписок от приложения быть не должно", round.none { it.role == "user" })
     }
 
     @Test fun serviceBlockIsSeparateAndSubordinate() {
@@ -58,33 +55,34 @@ class PromptComposerTest {
 
     @Test fun fullOpeningKeepsBothAnswersInOrder() {
         val opening = PromptComposer.opening(instruction, "Принял инструкцию.", service, "Принял правила.")
-        assertEquals(6, opening.size)
+        assertEquals(4, opening.size)
         assertEquals(instruction, opening[0].content)
-        assertEquals("Принял инструкцию.", opening[2].content)
-        assertTrue(PromptComposer.isService(opening[3]))
-        assertEquals("Принял правила.", opening[5].content)
-        assertEquals(6, PromptComposer.preludeSize(opening))
+        assertEquals("Принял инструкцию.", opening[1].content)
+        assertTrue(PromptComposer.isService(opening[2]))
+        assertEquals("Принял правила.", opening[3].content)
+        assertEquals(4, PromptComposer.preludeSize(opening))
+        assertTrue("В переписку не должно попадать ни одного сообщения от приложения", opening.none { it.role == "user" })
     }
 
-    /** Вопрос без ответа сбивает модель сильнее, чем его отсутствие. */
-    @Test fun withoutAnswersNoQuestionsAreSentAtAll() {
+    /** Знакомство не состоялось — уходит то же, что и раньше, без выдуманных реплик. */
+    @Test fun withoutAnswersTheOpeningIsJustInstructionAndService() {
         val opening = PromptComposer.opening(instruction, null, service, null)
         assertEquals(2, opening.size)
         assertEquals(instruction, opening[0].content)
         assertTrue(PromptComposer.isService(opening[1]))
-        assertTrue(opening.none { it.content == PromptComposer.INSTRUCTION_QUESTION })
+        assertTrue(opening.none { it.role == "assistant" })
     }
 
-    @Test fun serviceQuestionIsDroppedWhenItsAnswerIsMissing() {
+    @Test fun aMissingServiceAnswerIsNeverInvented() {
         val opening = PromptComposer.opening(instruction, "Принял.", service, null)
-        assertEquals(PromptComposer.SERVICE_QUESTION, opening.last().content)
-        assertTrue("Не должно быть выдуманного ответа", opening.count { it.role == "assistant" } == 1)
+        assertTrue(PromptComposer.isService(opening.last()))
+        assertEquals(1, opening.count { it.role == "assistant" })
     }
 
     @Test fun openingWithoutAnyServiceIsJustTheFirstRound() {
         val opening = PromptComposer.opening(instruction, "Принял.", null, null)
-        assertEquals(3, opening.size)
-        assertEquals("Принял.", opening[2].content)
+        assertEquals(2, opening.size)
+        assertEquals("Принял.", opening[1].content)
     }
 
     @Test fun editingTheInstructionInvalidatesTheOldAnswer() {
@@ -98,10 +96,10 @@ class PromptComposerTest {
         assertFalse(a == b)
     }
 
-    @Test fun preludeStopsAtTheFirstRealMessage() {
+    @Test fun preludeStopsAtTheFirstUserMessage() {
         val messages = PromptComposer.opening(instruction, "Принял.", service, "Принял.") +
             ApiMessage("user", "привет") + ApiMessage("assistant", "здравствуйте")
-        assertEquals(6, PromptComposer.preludeSize(messages))
+        assertEquals(4, PromptComposer.preludeSize(messages))
     }
 
     @Test fun reminderCountsTheConversationNotThePrelude() {
