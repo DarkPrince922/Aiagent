@@ -149,10 +149,12 @@ class WorkspaceStore(context: Context) {
         const val DEFAULT_CHUNK_CHARS = 30_000
         const val MAX_CHUNK_CHARS = 120_000
         private val TEXT_EXTENSIONS = setOf("txt", "json", "md", "csv", "log", "yaml", "yml", "xml")
-        /** Архив — единственный двоичный формат: его не читают, его пересылают. */
-        private val BINARY_EXTENSIONS = setOf("zip")
+        /** Двоичное: текстом не читается. Архив пересылают, базу открывают через SQL. */
+        private val DATABASE_EXTENSIONS = setOf("db", "sqlite", "sqlite3")
+        private val BINARY_EXTENSIONS = setOf("zip") + DATABASE_EXTENSIONS
 
         fun isText(name: String): Boolean = extensionOf(name) in TEXT_EXTENSIONS
+        fun isDatabase(name: String): Boolean = extensionOf(name) in DATABASE_EXTENSIONS
 
         /**
          * Имя файла из модели — недоверенный ввод.

@@ -17,6 +17,7 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import app.jarvis.data.NoteStore
 import app.jarvis.data.SshProfileStore
+import app.jarvis.data.SqlService
 import app.jarvis.data.WorkspaceStore
 import app.jarvis.net.SshService
 import app.jarvis.net.UrlPolicy
@@ -59,7 +60,8 @@ class ToolRegistry(
     private val profiles: SshProfileStore,
     private val web: WebService,
     private val ssh: SshService,
-    private val workspace: WorkspaceStore
+    private val workspace: WorkspaceStore,
+    private val sql: SqlService = SqlService(workspace)
 ) {
     /**
      * Запуск автономной задачи. Устанавливается контейнером после сборки менеджера:
@@ -77,7 +79,7 @@ class ToolRegistry(
         ToolInfo("web_search", "Поиск в интернете", "Ищет актуальные источники", "Интернет", "travel_explore", ToolRisk.READ_ONLY),
         ToolInfo("web_fetch", "Чтение страницы", "Извлекает текст HTTPS-страницы", "Интернет", "language", ToolRisk.READ_ONLY),
         ToolInfo("ssh_exec", "SSH-команды", "Выполняет команду на сохранённом сервере", "Разработка", "terminal", ToolRisk.REMOTE_COMMAND),
-        ToolInfo("http_request", "HTTP-запрос", "Проверяет API и webhooks", "Разработка", "http", ToolRisk.CHANGES_DEVICE),
+        ToolInfo("http_request", "HTTP-запрос", "Проверяет API и webhooks по http и https", "Разработка", "http", ToolRisk.CHANGES_DEVICE),
         ToolInfo("dns_lookup", "DNS lookup", "Определяет IP-адреса домена", "Разработка", "dns", ToolRisk.READ_ONLY),
         ToolInfo("json_format", "JSON formatter", "Проверяет и форматирует JSON", "Разработка", "data_object", ToolRisk.READ_ONLY),
         ToolInfo("calculate", "Калькулятор", "Вычисляет выражения без отправки данных", "Повседневное", "calculate", ToolRisk.READ_ONLY),
@@ -100,6 +102,10 @@ class ToolRegistry(
         ToolInfo("send_file", "Отправить файл", "Передаёт файл вам через меню «Поделиться»", "Файлы", "attach_file", ToolRisk.CHANGES_DEVICE),
         ToolInfo("create_zip", "Собрать архив", "Упаковывает файлы рабочей папки в zip", "Файлы", "folder_zip", ToolRisk.CHANGES_DEVICE),
         ToolInfo("upload_file", "Файл на сервер", "Кладёт файл из рабочей папки на сервер по SFTP", "Файлы", "cloud_upload", ToolRisk.CHANGES_DEVICE),
+        ToolInfo("sql_schema", "Схема базы", "Показывает таблицы и их структуру", "Базы данных", "schema", ToolRisk.READ_ONLY),
+        ToolInfo("sql_query", "SQL-запрос", "Читает данные из SQLite-базы", "Базы данных", "table_view", ToolRisk.READ_ONLY),
+        ToolInfo("sql_exec", "Изменить базу", "Выполняет INSERT, UPDATE, DELETE после подтверждения", "Базы данных", "edit_note", ToolRisk.CHANGES_DEVICE),
+        ToolInfo("sql_export", "Выгрузить в файл", "Сохраняет результат запроса в CSV или Markdown", "Базы данных", "file_download", ToolRisk.CHANGES_DEVICE),
         ToolInfo("download_file", "Файл с сервера", "Забирает файл с сервера в рабочую папку", "Файлы", "cloud_download", ToolRisk.READ_ONLY)
     )
 
@@ -125,7 +131,7 @@ class ToolRegistry(
         put(schema("web_fetch", "Прочитать содержимое публичной HTTPS-страницы по URL", props("url" to "string"), listOf("url")))
         put(schema("list_ssh_profiles", "Список доступных SSH-профилей без секретов"))
         put(schema("ssh_exec", "Выполнить команду на сервере из сохранённого SSH-профиля. В автономной задаче используй точный profile id, закреплённый в инструкции.", props("profile" to "string", "command" to "string"), listOf("profile", "command")))
-        put(schema("http_request", "Выполнить HTTPS-запрос для проверки API. Требует подтверждения.", props("url" to "string", "method" to "string", "body" to "string"), listOf("url")))
+        put(schema("http_request", "Выполнить HTTP или HTTPS-запрос для проверки API, включая адреса в локальной сети. Требует подтверждения.", props("url" to "string", "method" to "string", "body" to "string"), listOf("url")))
         put(schema("dns_lookup", "Получить IP-адреса публичного домена", props("host" to "string"), listOf("host")))
         put(schema("calculate", "Посчитать арифметическое выражение с + - * / % и скобками", props("expression" to "string"), listOf("expression")))
         put(schema("json_format", "Проверить и красиво отформатировать JSON", props("json" to "string"), listOf("json")))
@@ -168,6 +174,30 @@ class ToolRegistry(
                 .put("name", JSONObject().put("type", "string"))
                 .put("files", JSONObject().put("type", "array").put("items", JSONObject().put("type", "string"))),
             listOf("name", "files")
+        ))
+        put(schema(
+            "sql_schema",
+            "Таблицы SQLite-базы из рабочей папки: имена, число строк и DDL. С этого начинают работу с незнакомой базой.",
+            props("name" to "string"),
+            listOf("name")
+        ))
+        put(schema(
+            "sql_query",
+            "Прочитать данные из SQLite-базы (SELECT, WITH, PRAGMA, EXPLAIN). Возвращает таблицу с ограничением по числу строк.",
+            props("name" to "string", "query" to "string", "limit" to "integer"),
+            listOf("name", "query")
+        ))
+        put(schema(
+            "sql_exec",
+            "Изменить SQLite-базу: INSERT, UPDATE, DELETE, CREATE. Возвращает число затронутых строк. В обычном чате требует подтверждения.",
+            props("name" to "string", "statement" to "string"),
+            listOf("name", "statement")
+        ))
+        put(schema(
+            "sql_export",
+            "Выгрузить результат запроса в файл рабочей папки: format=csv для таблиц, format=markdown для чтения глазами. Дальше файл отдают через send_file или upload_file.",
+            props("name" to "string", "query" to "string", "target" to "string", "format" to "string"),
+            listOf("name", "query", "target")
         ))
         put(schema(
             "upload_file",
@@ -325,6 +355,27 @@ class ToolRegistry(
                         "Отправить пользователю — send_file, положить на сервер — upload_file."
                 )
             }
+            "sql_schema" -> done(sql.schema(args.string("name")))
+            "sql_query" -> done(
+                SqlService.render(
+                    sql.query(args.string("name"), args.string("query"), args.optInt("limit", SqlService.DEFAULT_ROWS))
+                )
+            )
+            // Правка базы необратима, поэтому в чате спрашиваем. Автономная задача работает
+            // по гранту: файл лежит в её же рабочей папке, ждать подтверждения ей нечем.
+            "sql_exec" -> dangerous(
+                confirmed || execution.autonomous,
+                "Изменить базу ${args.string("name")}: ${args.string("statement").take(160)}?"
+            ) { sql.execute(args.string("name"), args.string("statement")) }
+            "sql_export" -> {
+                val saved = sql.export(
+                    args.string("name"),
+                    args.string("query"),
+                    args.optString("target"),
+                    args.optString("format", "csv")
+                )
+                done("Выгружено в ${saved.name}, ${saved.bytes} байт. Отправить вам — send_file, на сервер — upload_file.")
+            }
             // Передача файлов идёт по тому же гранту, что и команды: закреплённый за задачей
             // профиль. Подтверждение здесь спрашивается ровно там же, где у ssh_exec.
             "upload_file" -> {
@@ -418,7 +469,7 @@ class ToolRegistry(
     }
 
     private fun simpleHttp(args: JSONObject): String {
-        val uri = UrlPolicy.requirePublicHttps(args.string("url"))
+        val uri = UrlPolicy.requireHttpOrHttps(args.string("url"))
         val method = args.optString("method", "GET").uppercase()
         require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Метод не поддерживается" }
         val connection = java.net.URL(uri.toString()).openConnection() as java.net.HttpURLConnection

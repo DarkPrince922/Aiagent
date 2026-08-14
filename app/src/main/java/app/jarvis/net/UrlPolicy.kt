@@ -76,6 +76,26 @@ object UrlPolicy {
     fun isPublicHttps(raw: String): Boolean = runCatching { requirePublicHttps(raw) }.isSuccess
 
     /**
+     * Адрес для `http_request`: и HTTP, и HTTPS, включая локальную сеть.
+     *
+     * Инструмент существует ради проверки своих API, а они часто висят на голом HTTP и на
+     * внутренних адресах — под правилом «только публичный HTTPS» он туда просто не доставал.
+     * Ограничение остаётся одно: credentials в URL, потому что они утекают в логи и в
+     * контекст модели. Схема разрешена только http/https — ни file://, ни ftp://, ни
+     * content://, чтобы «запрос по адресу» не превратился в чтение чего попало с устройства.
+     */
+    fun requireHttpOrHttps(raw: String): URI {
+        val uri = parse(raw)
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") {
+            throw UnsafeUrlException("Поддерживаются только http и https, получено: ${uri.scheme ?: "без схемы"}")
+        }
+        if (uri.userInfo != null) throw UnsafeUrlException("Логин и пароль в URL не поддерживаются")
+        if (uri.host.isNullOrBlank()) throw UnsafeUrlException("В адресе нет хоста")
+        return uri
+    }
+
+    /**
      * Адрес самого провайдера моделей — правило мягче, чем для инструментов.
      *
      * Свой сервер в домашней сети обычно висит на голом HTTP и без сертификата, поэтому
