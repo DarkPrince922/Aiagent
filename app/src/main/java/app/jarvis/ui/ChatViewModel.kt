@@ -29,6 +29,8 @@ data class ChatState(
     val sending: Boolean = false,
     val pending: PendingAgentAction? = null,
     val apiStatus: ApiStatus = ApiStatus.NOT_CONFIGURED,
+    /** Модели, которые вернул сам провайдер: угадывать имена не нужно. */
+    val availableModels: List<String> = emptyList(),
     val statusText: String = "Добавьте API-ключ",
     /** Файлы, прикреплённые к следующему сообщению. */
     val attachments: List<String> = emptyList(),
@@ -206,7 +208,14 @@ class ChatViewModel(
         mutable.value = mutable.value.copy(apiStatus = ApiStatus.CHECKING, statusText = "Проверяю API", banner = null)
         viewModelScope.launch {
             val check = withContext(Dispatchers.IO) { repository.checkConnection(settings) }
-            mutable.value = mutable.value.copy(apiStatus = if (check.ok) ApiStatus.ONLINE else ApiStatus.ERROR, statusText = check.message, banner = if (check.ok) null else check.message)
+            mutable.value = mutable.value.copy(
+                apiStatus = if (check.ok) ApiStatus.ONLINE else ApiStatus.ERROR,
+                statusText = check.message,
+                banner = if (check.ok) null else check.message,
+                // Пустой список означает «провайдер не отдал каталог», а не «моделей нет»:
+                // затирать им уже полученные имена нельзя.
+                availableModels = check.models.ifEmpty { mutable.value.availableModels }
+            )
         }
     }
 

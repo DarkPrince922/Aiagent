@@ -26,7 +26,10 @@ import app.jarvis.data.ProviderSettings
     var value by remember(initial) { mutableStateOf(initial) }
     var keyVisible by remember { mutableStateOf(false) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val cloudModels = listOf("claude-opus-4-8", "claude-sonnet-4-5", "gpt-5.2", "gpt-4.1")
+    // Имена моделей у каждого провайдера свои, и захардкоженный список у чужого провайдера
+    // просто врёт. Берём каталог, который вернул сам сервер при проверке подключения.
+    val knownModels = listOf("claude-opus-4-8", "claude-sonnet-4-5", "gpt-5.2", "gpt-4.1")
+    val cloudModels = state.availableModels.ifEmpty { knownModels }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Surface(color = MaterialTheme.colorScheme.surface) {
@@ -76,6 +79,15 @@ import app.jarvis.data.ProviderSettings
         item { SettingsField { OutlinedTextField(value.endpoint, { value = value.copy(endpoint = it) }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, leadingIcon = { Icon(Icons.Default.Link, null) }, supportingText = { Text("OpenAI-совместимый адрес на /v1. Свой сервер в локальной сети можно указывать по http://") }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
         item { SettingsField { OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(), label = { Text("Модель") }, leadingIcon = { Icon(Icons.Default.Memory, null) }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
         item { LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(cloudModels) { model -> SuggestionChip(onClick = { value = value.copy(model = model) }, label = { Text(model) }, icon = if (value.model == model) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null) } } }
+        item {
+            Text(
+                if (state.availableModels.isEmpty()) "Нажмите «Проверить» — список моделей подставится из каталога вашего провайдера"
+                else "Каталог провайдера: ${state.availableModels.size} моделей",
+                Modifier.padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         item { SettingsField { OutlinedTextField(value.apiKey, { value = value.copy(apiKey = it) }, Modifier.fillMaxWidth(), label = { Text("API-ключ") }, leadingIcon = { Icon(Icons.Default.Key, null) }, trailingIcon = { IconButton(onClick = { keyVisible = !keyVisible }) { Icon(if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (keyVisible) "Скрыть" else "Показать") } }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, supportingText = { Text("Шифруется ключом Android Keystore") }) } }
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
