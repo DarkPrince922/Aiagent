@@ -74,10 +74,10 @@ class ChatRepository(
         }
         settings.readinessError?.let { throw IllegalArgumentException(it) }
         val service = PromptComposer.service(
-            if (settings.toolsEnabled && settings.answerBeforeTools) ANSWER_FIRST_PROTOCOL else null,
+            if (settings.toolsEnabled && settings.answerBeforeTools) PromptDefaults.orDefault(settings.answerFirstPrompt, PromptDefaults.ANSWER_FIRST) else null,
             "Текущие локальные дата и время: ${ZonedDateTime.now()}",
             "Сохранённые SSH-профили (секреты не передаются):\n${tools.sshContext()}",
-            "Рабочая папка обмена файлами: ${workspaceHint()}"
+            if (settings.toolsEnabled) PromptDefaults.orDefault(settings.toolsPrompt, PromptDefaults.TOOLS) else null
         )
         val messages = buildList {
             addAll(introduce(settings, conversationId, service, onProgress))
@@ -278,7 +278,7 @@ class ChatRepository(
         onProgress("Готовлю итог")
         runCatching {
             val request = PromptComposer.withReminder(compactContext(messages, settings), settings.systemPrompt, force = true) +
-                ApiMessage("user", SUMMARY_PROMPT)
+                ApiMessage("user", PromptDefaults.orDefault(settings.summaryPrompt, PromptDefaults.SUMMARY))
             api.complete(settings.copy(toolsEnabled = false), request, org.json.JSONArray()).text
         }.onSuccess { text ->
             if (text.isNotBlank()) onSummary(text.trim())
@@ -287,12 +287,6 @@ class ChatRepository(
             onSummary("Итог сформировать не удалось: ${it.message ?: "ошибка запроса"}")
         }
     }
-
-    private fun workspaceHint(): String =
-        "файлы, которыми обменялись с пользователем; список — list_files, чтение — read_file, поиск по большому файлу — search_file, " +
-            "создание — write_file, отправка пользователю — send_file. Несколько файлов упаковывай в архив через create_zip. " +
-            "Файл на сервер и обратно — upload_file и download_file по SFTP. Большой файл read_file отдаёт окнами: в ответе есть " +
-            "общий размер и offset следующего куска — дочитывай повторными вызовами, а не делай вывод по началу файла"
 
     /**
      * Что на самом деле дошло до модели.
@@ -385,12 +379,5 @@ class ChatRepository(
             "Ты вызвал инструмент, не написав ни слова. Сначала ответь пользователю обычным текстом " +
                 "по основной инструкции: что понято и что собираешься сделать. Вызовы инструментов " +
                 "помести в тот же ответ после текста."
-        const val SUMMARY_PROMPT =
-            "Подведи итог этого хода отдельным сообщением: что было сделано, что получилось и что осталось. " +
-                "Не вызывай инструменты, не повторяй длинные выдержки, уложись в 5 пунктов."
-        const val ANSWER_FIRST_PROTOCOL =
-            "ПОРЯДОК РАБОТЫ: сначала прочитай запрос и ответь на него обычным текстом — что ты понял и что " +
-                "намерен сделать. Вызовы инструментов помещай в тот же ответ, но только после этого текста. " +
-                "Никогда не вызывай инструмент, не написав перед этим ни слова."
     }
 }

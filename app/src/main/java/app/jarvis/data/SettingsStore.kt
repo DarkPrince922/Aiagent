@@ -21,6 +21,10 @@ class SettingsStore(context: Context) {
         answerBeforeTools = prefs.getBoolean("answer_before_tools", true),
         primePrompt = prefs.getBoolean("prime_prompt", true),
         instructionAsUserTurn = prefs.getBoolean("instruction_as_user", false),
+        answerFirstPrompt = prefs.getString("prompt_answer_first", null) ?: PromptDefaults.ANSWER_FIRST,
+        toolsPrompt = prefs.getString("prompt_tools", null) ?: PromptDefaults.TOOLS,
+        autonomyPrompt = prefs.getString("prompt_autonomy", null) ?: PromptDefaults.AUTONOMY,
+        summaryPrompt = prefs.getString("prompt_summary", null) ?: PromptDefaults.SUMMARY,
         summarizeAnswers = prefs.getBoolean("summarize_answers", true)
     )
     fun save(value: ProviderSettings) {
@@ -41,6 +45,10 @@ class SettingsStore(context: Context) {
         .putBoolean("answer_before_tools", value.answerBeforeTools)
         .putBoolean("prime_prompt", value.primePrompt)
         .putBoolean("instruction_as_user", value.instructionAsUserTurn)
+        .putString("prompt_answer_first", PromptDefaults.orDefault(value.answerFirstPrompt, PromptDefaults.ANSWER_FIRST))
+        .putString("prompt_tools", PromptDefaults.orDefault(value.toolsPrompt, PromptDefaults.TOOLS))
+        .putString("prompt_autonomy", PromptDefaults.orDefault(value.autonomyPrompt, PromptDefaults.AUTONOMY))
+        .putString("prompt_summary", PromptDefaults.orDefault(value.summaryPrompt, PromptDefaults.SUMMARY))
         .putBoolean("summarize_answers", value.summarizeAnswers)
         .apply()
     }

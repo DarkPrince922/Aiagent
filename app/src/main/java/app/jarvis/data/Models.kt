@@ -37,7 +37,7 @@ data class ProviderSettings(
     val localMaxTokens: Int = 384,
     /** 0 — подобрать по числу ядер. */
     val localThreads: Int = 0,
-    val systemPrompt: String = """Ты Jarvis, личный Android-ассистент пользователя. Самостоятельно разбивай задачи на шаги и используй доступные инструменты. Для актуальной информации сначала выполняй web_search, затем при необходимости web_fetch. Никогда не выдумывай результат инструмента. Опасные или изменяющие внешнее состояние действия приложение запросит подтвердить. Отвечай на языке пользователя, кратко и предметно.""",
+    val systemPrompt: String = PromptDefaults.SYSTEM,
     val agentSteps: Int = 8,
     val unlimitedAgent: Boolean = false,
     val toolsEnabled: Boolean = true,
@@ -48,7 +48,15 @@ data class ProviderSettings(
     /** В начале диалога дать модели голую инструкцию и получить подтверждение режима. */
     val primePrompt: Boolean = true,
     /** Продублировать инструкцию сообщением пользователя: для серверов, подменяющих system. */
-    val instructionAsUserTurn: Boolean = false
+    val instructionAsUserTurn: Boolean = false,
+    /** Правило «сначала ответ, потом инструменты». */
+    val answerFirstPrompt: String = PromptDefaults.ANSWER_FIRST,
+    /** Описание работы с файлами и инструментами. */
+    val toolsPrompt: String = PromptDefaults.TOOLS,
+    /** Правила автономной задачи. */
+    val autonomyPrompt: String = PromptDefaults.AUTONOMY,
+    /** Запрос на подведение итога хода. */
+    val summaryPrompt: String = PromptDefaults.SUMMARY
 )
 
 /**

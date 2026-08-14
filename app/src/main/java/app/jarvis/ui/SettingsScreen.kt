@@ -19,6 +19,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.jarvis.data.LlmEngine
+import app.jarvis.data.PromptDefaults
 import app.jarvis.data.ProviderSettings
 
 @Composable fun SettingsScreen(vm: ChatViewModel, models: ModelsViewModel, initial: ProviderSettings) {
@@ -147,7 +148,59 @@ import app.jarvis.data.ProviderSettings
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
-        item { SettingsField { OutlinedTextField(value.systemPrompt, { value = value.copy(systemPrompt = it) }, Modifier.fillMaxWidth(), label = { Text("Системная инструкция") }, leadingIcon = { Icon(Icons.Default.Psychology, null) }, minLines = 5, maxLines = 12) } }
+        item { SectionTitle("Промты", Icons.Default.Psychology) }
+        item {
+            Text(
+                "Имя и характер ассистента задаются только системной инструкцией — приложение своего имени не навязывает. " +
+                    "Остальные тексты приложение добавляет от себя; их можно переписать или вернуть кнопкой «Сбросить».",
+                Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        item {
+            PromptField("Системная инструкция", value.systemPrompt, PromptDefaults.SYSTEM, minLines = 5) {
+                value = value.copy(systemPrompt = it)
+            }
+        }
+        item {
+            PromptField("Сначала ответ, потом инструменты", value.answerFirstPrompt, PromptDefaults.ANSWER_FIRST) {
+                value = value.copy(answerFirstPrompt = it)
+            }
+        }
+        item {
+            PromptField("Инструменты и файлы", value.toolsPrompt, PromptDefaults.TOOLS) {
+                value = value.copy(toolsPrompt = it)
+            }
+        }
+        item {
+            PromptField("Правила автономной задачи", value.autonomyPrompt, PromptDefaults.AUTONOMY) {
+                value = value.copy(autonomyPrompt = it)
+            }
+        }
+        item {
+            PromptField("Запрос на итог", value.summaryPrompt, PromptDefaults.SUMMARY) {
+                value = value.copy(summaryPrompt = it)
+            }
+        }
+        item {
+            SettingsField {
+                OutlinedButton(
+                    onClick = {
+                        value = value.copy(
+                            systemPrompt = PromptDefaults.SYSTEM,
+                            answerFirstPrompt = PromptDefaults.ANSWER_FIRST,
+                            toolsPrompt = PromptDefaults.TOOLS,
+                            autonomyPrompt = PromptDefaults.AUTONOMY,
+                            summaryPrompt = PromptDefaults.SUMMARY
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.RestartAlt, null); Spacer(Modifier.width(7.dp)); Text("Сбросить все промты")
+                }
+            }
+        }
         item {
             SettingsField {
                 Column(Modifier.fillMaxWidth()) {
@@ -195,3 +248,37 @@ import app.jarvis.data.ProviderSettings
 }
 
 @Composable private fun SettingsField(content: @Composable () -> Unit) { Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) { content() } }
+
+/**
+ * Поле промта со сбросом.
+ *
+ * Кнопка показывается только когда текст отличается от исходного: иначе она предлагает
+ * сделать то, что уже сделано, и лишь захламляет экран.
+ */
+@Composable private fun PromptField(
+    label: String,
+    value: String,
+    default: String,
+    minLines: Int = 3,
+    onChange: (String) -> Unit
+) {
+    SettingsField {
+        Column(Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value,
+                onChange,
+                Modifier.fillMaxWidth(),
+                label = { Text(label) },
+                minLines = minLines,
+                maxLines = 14
+            )
+            if (value.trim() != default.trim()) {
+                TextButton(onClick = { onChange(default) }, modifier = Modifier.align(Alignment.End)) {
+                    Icon(Icons.Default.Undo, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Сбросить")
+                }
+            }
+        }
+    }
+}

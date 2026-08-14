@@ -18,6 +18,7 @@ import app.jarvis.data.ConversationStore
 import app.jarvis.data.LlmEngine
 import app.jarvis.data.Message
 import app.jarvis.data.PromptComposer
+import app.jarvis.data.PromptDefaults
 import app.jarvis.data.ProviderSettings
 import app.jarvis.data.SettingsStore
 import app.jarvis.data.SshProfileStore
@@ -379,29 +380,17 @@ class AutonomousAgentManager(
             "За задачей закреплён SSH profile_id=$profileId, name=$profileName. " +
                 if (autoApproveSsh) "SSH-команды на этом профиле заранее разрешены; не проси подтверждения." else "SSH-команды не разрешены."
         }
-        val taskRules = """Ты выполняешь долговременную автономную задачу. Работай до фактического и проверенного результата.
+        val taskRules = """${PromptDefaults.orDefault(settings.get().autonomyPrompt, PromptDefaults.AUTONOMY)}
 ЦЕЛЬ ЗАДАЧИ: $goal
-- Не проси промежуточных подтверждений. Если действие запрещено политикой задачи, выбери другой путь.
-- Перед изменениями сначала изучи состояние; делай резервные копии, когда это разумно; после изменения проверь результат.
-- HTTP 409, ненулевой exit code и временные сетевые сбои не считай концом задачи: проверь текущее состояние, смени подход и продолжай.
-- Записывай только ключевые проверяемые моменты через record_progress. Не записывай скрытые рассуждения.
-- Вызови finish_task только после проверки цели. Обычный текст не завершает задачу.
+
+ОБМЕН ФАЙЛАМИ.
+${PromptDefaults.orDefault(settings.get().toolsPrompt, PromptDefaults.TOOLS)}
+- Файл пользователю приходит уведомлением: подтверждения не нужно и ждать его не надо.
+- upload_file требует profile закреплённой задачи и полный remote_path.
 
 $selected
 Доступные SSH-профили (без секретов):
 ${tools.sshContext()}
-
-ОБМЕН ФАЙЛАМИ С ПОЛЬЗОВАТЕЛЕМ.
-- Пользователь кладёт файлы в рабочую папку; смотри их через list_files, читай через read_file.
-- Большой файл read_file отдаёт окнами: в ответе есть общий размер и offset следующего куска.
-  Дочитывай повторными вызовами, а не делай вывод по началу файла. Поиск — search_file.
-- Чтобы отдать результат файлом пользователю: write_file, затем send_file. Файл придёт
-  уведомлением, подтверждения не нужно и ждать его не надо.
-- Чтобы положить файл на сервер: write_file, затем upload_file с profile закреплённой задачи
-  и полным remote_path. Через ssh_exec содержимое не передать — оно не поместится в команду.
-- Забрать файл с сервера: download_file, дальше читать его через read_file окнами.
-- Несколько файлов отдавай одним архивом: create_zip, затем send_file или upload_file.
-  Архив можно переслать, но нельзя прочитать — read_file работает только с текстом.
 ${workspaceContext()}
 Текущие дата и время: ${ZonedDateTime.now()}"""
         // Инструкция пользователя идёт отдельным системным сообщением и дословно; правила

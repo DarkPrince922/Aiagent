@@ -145,7 +145,7 @@ class ToolRegistry(
         put(schema("set_alarm", "Подготовить будильник", props("hour" to "integer", "minute" to "integer", "label" to "string"), listOf("hour", "minute")))
         put(schema("set_timer", "Подготовить таймер", props("seconds" to "integer", "label" to "string"), listOf("seconds")))
         put(schema("add_calendar_event", "Подготовить событие календаря", props("title" to "string", "start_epoch_ms" to "integer", "end_epoch_ms" to "integer", "location" to "string"), listOf("title", "start_epoch_ms")))
-        put(schema("open_app_settings", "Открыть настройки приложения Jarvis"))
+        put(schema("open_app_settings", "Открыть системные настройки этого приложения"))
         put(schema("list_files", "Список файлов рабочей папки: имя, размер, время изменения. Отсюда берутся точные имена для read_file."))
         put(schema(
             "read_file",
