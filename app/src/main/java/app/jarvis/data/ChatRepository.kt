@@ -48,7 +48,7 @@ class ChatRepository(
     fun conversations() = conversationStore.list()
     fun ensureConversation() = conversationStore.ensureConversation()
     fun createConversation() = conversationStore.create()
-    fun deleteConversation(id: String) { pendingStore.removeConversation(id); conversationStore.deleteConversation(id) }
+    fun deleteConversation(id: String) { pendingStore.removeConversation(id); ackStore.clear(id); conversationStore.deleteConversation(id) }
     fun messages(id: String) = conversationStore.messages(id)
     fun saveMessage(conversationId: String, message: Message) = conversationStore.saveMessage(conversationId, message)
     fun deleteMessage(id: Long) = conversationStore.deleteMessage(id)

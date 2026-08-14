@@ -127,9 +127,10 @@ class WorkspaceStore(context: Context) {
                 zip.closeEntry()
             }
         }
-        require(target.length() <= MAX_FILE_BYTES) {
+        // Не оставляем за собой огрызок: недоделанный архив хуже, чем его отсутствие.
+        if (target.length() > MAX_FILE_BYTES) {
             target.delete()
-            "Архив вышел больше ${MAX_FILE_BYTES / (1024 * 1024)} МБ"
+            error("Архив вышел больше ${MAX_FILE_BYTES / (1024 * 1024)} МБ")
         }
         return WorkspaceFile(target.name, target.length(), target.lastModified())
     }

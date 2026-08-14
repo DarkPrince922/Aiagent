@@ -487,7 +487,7 @@ ${workspaceContext()}
             if (content.length > limit) message.copy(content = content.take(limit) + "\n[сокращено]") else message
         }
         if (clipped.sumOf { it.content?.length ?: 0 } <= (if (local) 140_000 else 340_000) && clipped.size <= 60) return clipped
-        val prelude = clipped.take(PromptComposer.preludeSize(clipped))
+        val prelude = clipped.take(PromptComposer.preludeSize(clipped, settings.systemPrompt))
         val tail = clipped.drop(prelude.size).takeLast(48).dropWhile { it.role == "tool" }
         return prelude + tail
     }

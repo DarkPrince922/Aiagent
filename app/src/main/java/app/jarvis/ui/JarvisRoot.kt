@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.AutoMode
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -27,6 +28,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -45,6 +47,7 @@ import kotlinx.coroutines.withContext
 private enum class Destination(val label: String) {
     CHAT("Чат"),
     AUTONOMY("Агент"),
+    FILES("Файлы"),
     TOOLS("Инструменты"),
     SERVERS("Серверы"),
     SETTINGS("Настройки")
@@ -64,6 +67,11 @@ fun JarvisRoot(container: AppContainer) {
         @Suppress("UNCHECKED_CAST")
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
             AutonomyViewModel(container.autonomous, container.sshProfiles) as T
+    })
+    val filesVm: FilesViewModel = viewModel(key = "files", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+            FilesViewModel(container.workspace) as T
     })
     val modelsVm: ModelsViewModel = viewModel(key = "models", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -89,6 +97,7 @@ fun JarvisRoot(container: AppContainer) {
                                     imageVector = when (item) {
                                         Destination.CHAT -> Icons.Default.ChatBubble
                                         Destination.AUTONOMY -> Icons.Default.AutoMode
+                                        Destination.FILES -> Icons.Default.Folder
                                         Destination.TOOLS -> Icons.Default.Build
                                         Destination.SERVERS -> Icons.Default.Dns
                                         Destination.SETTINGS -> Icons.Default.Settings
@@ -136,6 +145,12 @@ fun JarvisRoot(container: AppContainer) {
                         openAgent = { destination = Destination.AUTONOMY }
                     )
                     Destination.AUTONOMY -> AutonomyScreen(autonomyVm)
+                    // Список читается с диска: обновляем при каждом входе, иначе свежий отчёт
+                    // агента не появится, пока приложение не перезапустят.
+                    Destination.FILES -> {
+                        LaunchedEffect(Unit) { filesVm.refresh() }
+                        FilesScreen(filesVm, container.workspace)
+                    }
                     Destination.TOOLS -> ToolsScreen(vm.tools) { prompt ->
                         vm.prefill(prompt)
                         destination = Destination.CHAT
