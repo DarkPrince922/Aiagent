@@ -260,7 +260,14 @@ class ToolRegistry(
                     }
                 }
             }
-            "http_request" -> dangerous(confirmed || (execution.autonomous && args.optString("method", "GET").equals("GET", true)), "${args.optString("method", "GET").uppercase()} ${args.string("url")}") { simpleHttp(args) }
+            // Автономной задаче разрешены все методы, а не только GET. Ограничение GET'ом
+            // выглядело осторожным, но на деле ломало саму задачу: проверить API или дёрнуть
+            // webhook без POST нельзя, а спросить подтверждение задаче не у кого — она
+            // упиралась в отказ и искала обходные пути вместо работы.
+            "http_request" -> dangerous(
+                confirmed || execution.autonomous,
+                "${args.optString("method", "GET").uppercase()} ${args.string("url")}"
+            ) { simpleHttp(args) }
             "dns_lookup" -> done(InetAddress.getAllByName(args.string("host")).joinToString("\n") { it.hostAddress ?: "" })
             "calculate" -> done(ExpressionParser(args.string("expression")).parse().toString())
             "json_format" -> done(formatJson(args.string("json")))
