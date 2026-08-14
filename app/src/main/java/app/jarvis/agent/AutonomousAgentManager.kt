@@ -410,8 +410,26 @@ ${workspaceContext()}
      */
     private fun workspaceContext(): String {
         val files = workspace.list()
-        if (files.isEmpty()) return "Сейчас рабочая папка пуста."
-        return "Сейчас в рабочей папке:\n" + files.take(30).joinToString("\n") { "- ${it.name} (${it.bytes} байт)" }
+        if (files.isEmpty()) return "Рабочая папка пуста."
+        val now = System.currentTimeMillis()
+        val (fresh, old) = files.partition { now - it.modifiedAt <= FRESH_WINDOW_MS }
+        return buildString {
+            if (fresh.isNotEmpty()) {
+                append("Добавлено перед этой задачей:\n")
+                fresh.take(MAX_LISTED_FILES).forEach { append("- ").append(it.name).append(" (").append(it.bytes).append(" байт)\n") }
+            }
+            if (old.isNotEmpty()) {
+                if (fresh.isEmpty()) {
+                    append("Свежих файлов нет. Последнее в папке: ")
+                    append(old.take(MAX_LISTED_FILES).joinToString(", ") { it.name })
+                    append(".\n")
+                } else {
+                    append("Ещё в папке ").append(old.size).append(" файлов от прежних задач.\n")
+                }
+            }
+            append("Файлы прежних задач к этой не относятся. Открывай файл, только если он нужен для ЦЕЛИ; ")
+            append("полный список — list_files.")
+        }
     }
 
     private fun waitForNetwork(taskId: String, error: String) {
@@ -549,6 +567,15 @@ ${workspaceContext()}
     }
 
     companion object {
+        /**
+         * Что считать «файлом для этой задачи».
+         *
+         * Рабочая папка общая и копится: список всех файлов подряд заставлял агента читать
+         * отчёты прежних задач и путаться в них. Пользователь прикрепляет файл и почти сразу
+         * ставит задачу, поэтому свежесть — рабочий признак принадлежности.
+         */
+        private const val FRESH_WINDOW_MS = 60 * 60_000L
+        private const val MAX_LISTED_FILES = 10
         private const val MAX_MODEL_STEPS_PER_RUN = 6
         private const val MAX_RUN_MILLIS = 6 * 60_000L
         private const val CONTINUE_PROMPT = "Задача ещё не завершена через finish_task. Продолжай самостоятельно: выбери следующий проверяемый шаг, используй инструменты или заверши задачу только после проверки."

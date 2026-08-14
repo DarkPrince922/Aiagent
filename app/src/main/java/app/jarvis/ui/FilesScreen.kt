@@ -33,6 +33,7 @@ import java.time.format.DateTimeFormatter
 @Composable fun FilesScreen(vm: FilesViewModel, workspace: WorkspaceStore) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var confirmClear by remember { mutableStateOf(false) }
 
     fun share(name: String) {
         val file = workspace.resolve(name)
@@ -63,6 +64,9 @@ import java.time.format.DateTimeFormatter
                         )
                     }
                     IconButton(onClick = vm::refresh) { Icon(Icons.Default.Refresh, "Обновить") }
+                    if (state.files.isNotEmpty()) {
+                        IconButton(onClick = { confirmClear = true }) { Icon(Icons.Default.DeleteSweep, "Очистить папку") }
+                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
@@ -81,6 +85,23 @@ import java.time.format.DateTimeFormatter
                 }
             }
         }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Очистить рабочую папку?") },
+            text = {
+                Text(
+                    "Удалятся все ${state.files.size} файлов. Автономные задачи перестанут натыкаться " +
+                        "на отчёты прежних запусков. Отменить удаление нельзя."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.deleteAll(); confirmClear = false }) { Text("Удалить всё") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } }
+        )
     }
 
     state.preview?.let { preview ->

@@ -68,6 +68,23 @@ class FilesViewModel(private val workspace: WorkspaceStore) : ViewModel() {
         }
     }
 
+    /**
+     * Очистка папки целиком.
+     *
+     * Папка общая для всех задач, и накопившиеся отчёты прежних запусков сбивают агента:
+     * он их читает и путается. Разбирать их по одному вручную — работа, которую никто
+     * делать не станет.
+     */
+    fun deleteAll() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                workspace.list().forEach { runCatching { workspace.delete(it.name) } }
+            }
+            mutable.value = mutable.value.copy(preview = null)
+            refresh()
+        }
+    }
+
     /** Архив открывать нечем, и это не ошибка: его отправляют, а не читают. */
     private fun load(name: String): FilePreview {
         if (!WorkspaceStore.isText(name)) {
