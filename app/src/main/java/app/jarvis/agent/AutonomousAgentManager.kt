@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import app.jarvis.data.AgentEventKind
+import app.jarvis.data.AgentLoopGuard
 import app.jarvis.data.AgentOperationStatus
 import app.jarvis.data.AgentTask
 import app.jarvis.data.AgentTaskEvent
@@ -183,6 +184,13 @@ class AutonomousAgentManager(
                             // Ответ до действий виден в чате, а не только в журнале задачи.
                             if (planning) store.get(taskId)?.let { mirrorToChat(it, answer.text, "agent-plan:${it.id}") }
                         }
+                        // Текст без действий — единственный случай, который не ловила защита
+                        // от повторов: вызовов нет, повторять нечего, и задача прощалась
+                        // с пользователем по кругу, пока он спал.
+                        if (AgentLoopGuard.isIdleLoop(messages, CONTINUE_PROMPT)) {
+                            val streak = AgentLoopGuard.idleStreak(messages, CONTINUE_PROMPT)
+                            return stopStalled(taskId, AgentLoopGuard.idleReason(streak), answer.text)
+                        }
                         messages = messages + ApiMessage("user", CONTINUE_PROMPT)
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Продолжаю до проверенного результата")
                     } else {
@@ -199,6 +207,9 @@ class AutonomousAgentManager(
                             answer.toolCalls.forEach { store.planOperation(taskId, it.id, it.name, it.arguments.toString()) }
                         }
                     }
+                }
+                if (AgentLoopGuard.isExhausted(step)) {
+                    return stopStalled(taskId, AgentLoopGuard.exhaustedReason(step), null)
                 }
                 task = store.get(taskId) ?: return AutonomousRunResult.DONE
                 notifications.updateProgress(task)
@@ -430,6 +441,27 @@ ${workspaceContext()}
             append("Файлы прежних задач к этой не относятся. Открывай файл, только если он нужен для ЦЕЛИ; ")
             append("полный список — list_files.")
         }
+    }
+
+    /**
+     * Останавливает задачу, которая перестала продвигаться.
+     *
+     * Именно останавливает, а не ставит на паузу: пауза возобновляется сама, и агент вернулся
+     * бы в тот же круг. Причина уходит и в журнал, и в чат, и в уведомление — пользователь
+     * мог не смотреть на экран часами.
+     */
+    private fun stopStalled(taskId: String, reason: String, lastText: String?): AutonomousRunResult {
+        val summary = buildString {
+            append(reason)
+            if (!lastText.isNullOrBlank()) append("\n\nПоследний ответ агента: ").append(lastText.take(500))
+        }
+        store.setStatus(taskId, AgentTaskStatus.STOPPED, "Остановлено: агент не продвигается")
+        store.addEvent(taskId, AgentEventKind.WARNING, "Задача остановлена автоматически", summary)
+        store.get(taskId)?.let {
+            mirrorToChat(it, summary, "agent-stalled:${it.id}")
+            announce(it, AgentTaskStatus.STOPPED, summary)
+        }
+        return AutonomousRunResult.DONE
     }
 
     private fun waitForNetwork(taskId: String, error: String) {
