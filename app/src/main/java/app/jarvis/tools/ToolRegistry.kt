@@ -60,8 +60,7 @@ class ToolRegistry(
     private val profiles: SshProfileStore,
     private val web: WebService,
     private val ssh: SshService,
-    private val workspace: WorkspaceStore,
-    private val sql: SqlService = SqlService(workspace)
+    private val workspace: WorkspaceStore
 ) {
     /**
      * Запуск автономной задачи. Устанавливается контейнером после сборки менеджера:
@@ -238,6 +237,10 @@ class ToolRegistry(
     }.ifBlank { "SSH profiles: none" }
 
     fun execute(name: String, args: JSONObject, confirmed: Boolean = false, execution: ToolExecutionContext = ToolExecutionContext()): ToolResult = try {
+        // Файлы задачи живут в её собственной папке: две параллельные задачи, записавшие
+        // report.md, иначе затирали бы друг друга молча. В чате область общая, как и была.
+        val workspace = this.workspace.scoped(execution.taskId)
+        val sql = SqlService(workspace)
         when (name) {
             "get_current_time" -> done(ZonedDateTime.now().toString())
             "device_status" -> done(deviceStatus())

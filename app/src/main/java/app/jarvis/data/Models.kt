@@ -56,7 +56,9 @@ data class ProviderSettings(
     /** Правила автономной задачи. */
     val autonomyPrompt: String = PromptDefaults.AUTONOMY,
     /** Запрос на подведение итога хода. */
-    val summaryPrompt: String = PromptDefaults.SUMMARY
+    val summaryPrompt: String = PromptDefaults.SUMMARY,
+    /** Сколько автономных задач считать одновременно. Больше — быстрее упрёшься в лимиты. */
+    val maxParallelTasks: Int = 3
 )
 
 /**

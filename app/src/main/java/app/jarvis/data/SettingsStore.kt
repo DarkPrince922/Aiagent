@@ -25,6 +25,7 @@ class SettingsStore(context: Context) {
         toolsPrompt = prefs.getString("prompt_tools", null) ?: PromptDefaults.TOOLS,
         autonomyPrompt = prefs.getString("prompt_autonomy", null) ?: PromptDefaults.AUTONOMY,
         summaryPrompt = prefs.getString("prompt_summary", null) ?: PromptDefaults.SUMMARY,
+        maxParallelTasks = prefs.getInt("max_parallel_tasks", 3).coerceIn(1, 4),
         summarizeAnswers = prefs.getBoolean("summarize_answers", true)
     )
     fun save(value: ProviderSettings) {
@@ -49,6 +50,7 @@ class SettingsStore(context: Context) {
         .putString("prompt_tools", PromptDefaults.orDefault(value.toolsPrompt, PromptDefaults.TOOLS))
         .putString("prompt_autonomy", PromptDefaults.orDefault(value.autonomyPrompt, PromptDefaults.AUTONOMY))
         .putString("prompt_summary", PromptDefaults.orDefault(value.summaryPrompt, PromptDefaults.SUMMARY))
+        .putInt("max_parallel_tasks", value.maxParallelTasks.coerceIn(1, 4))
         .putBoolean("summarize_answers", value.summarizeAnswers)
         .apply()
     }

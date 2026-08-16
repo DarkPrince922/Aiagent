@@ -30,18 +30,53 @@ data class FileMatch(val line: Int, val text: String)
  * это единственный каталог, доступный по обычному пути. Пользователь кладёт файлы через
  * системное «Поделиться» или кнопку в чате, агент — через инструменты.
  */
-class WorkspaceStore(context: Context) {
-    private val root = File(context.getExternalFilesDir(null) ?: context.filesDir, "workspace")
+class WorkspaceStore(context: Context, private val scope: String? = null) {
+    private val shared = File(context.getExternalFilesDir(null) ?: context.filesDir, "workspace")
+
+    /**
+     * Своя папка задачи.
+     *
+     * Папка одна на всех, и две параллельные задачи, записавшие `report.md`, затирали друг
+     * друга молча: вторая просто получала не свои данные. У каждой задачи теперь свой
+     * каталог, а общая папка остаётся доступной на чтение — там лежат файлы, которые
+     * пользователь прикрепил.
+     */
+    private val root: File = if (scope.isNullOrBlank()) shared else File(shared, "tasks/${safeScope(scope)}")
+
+    fun scoped(taskId: String?): WorkspaceStore =
+        if (taskId.isNullOrBlank() || taskId == scope) this else WorkspaceStore(appContext, taskId)
+
+    private val appContext = context.applicationContext
 
     fun directory(): File = root.apply { if (!exists()) mkdirs() }
 
-    fun list(): List<WorkspaceFile> = directory().listFiles()
-        ?.filter { it.isFile }
-        ?.sortedByDescending { it.lastModified() }
-        ?.map { WorkspaceFile(it.name, it.length(), it.lastModified()) }
-        .orEmpty()
+    /** Файлы задачи и, для задачи, общие файлы пользователя — свои имеют приоритет. */
+    fun list(): List<WorkspaceFile> {
+        val own = directory().listFiles()?.filter { it.isFile }.orEmpty()
+        val ownNames = own.map { it.name }.toSet()
+        val inherited = if (scope.isNullOrBlank()) emptyList()
+            else shared.listFiles()?.filter { it.isFile && it.name !in ownNames }.orEmpty()
+        return (own + inherited)
+            .sortedByDescending { it.lastModified() }
+            .map { WorkspaceFile(it.name, it.length(), it.lastModified()) }
+    }
 
-    fun resolve(name: String): File = File(directory(), safeName(name))
+    /**
+     * Куда писать: всегда в свою папку. Куда читать: сначала своя, потом общая.
+     *
+     * Так задача видит прикреплённый пользователем файл, но её собственные результаты
+     * не попадают в чужие руки и не перетирают чужие.
+     */
+    fun resolve(name: String): File {
+        val safe = safeName(name)
+        val own = File(directory(), safe)
+        if (own.exists() || scope.isNullOrBlank()) return own
+        val fromShared = File(shared, safe)
+        return if (fromShared.isFile) fromShared else own
+    }
+
+    /** Только своя папка: запись не должна уходить в общую даже по совпадению имени. */
+    private fun target(name: String): File = File(directory(), safeName(name))
 
     /**
      * Читает окно файла.
@@ -80,17 +115,18 @@ class WorkspaceStore(context: Context) {
         require(content.toByteArray(Charsets.UTF_8).size <= MAX_FILE_BYTES) {
             "Содержимое больше ${MAX_FILE_BYTES / (1024 * 1024)} МБ"
         }
-        val file = resolve(name)
+        val file = target(name)
         file.writeText(content, Charsets.UTF_8)
         return WorkspaceFile(file.name, file.length(), file.lastModified())
     }
 
-    fun delete(name: String): Boolean = resolve(name).delete()
+    /** Удаляем только своё: общий файл пользователя задача стирать не должна. */
+    fun delete(name: String): Boolean = target(name).delete()
 
     /** Копирует принятый файл; при совпадении имени добавляет суффикс. */
     fun store(name: String, bytes: ByteArray): WorkspaceFile {
         require(bytes.size <= MAX_FILE_BYTES) { "Файл больше ${MAX_FILE_BYTES / (1024 * 1024)} МБ" }
-        var file = resolve(name)
+        var file = target(name)
         var attempt = 1
         while (file.exists() && attempt < 100) {
             val base = file.name.substringBeforeLast('.')
@@ -110,9 +146,9 @@ class WorkspaceStore(context: Context) {
      */
     fun archive(name: String, entries: List<String>): WorkspaceFile {
         require(entries.isNotEmpty()) { "Не указано, что архивировать" }
-        val target = File(directory(), safeName(name.ifBlank { "archive.zip" }.let {
+        val target = target(name.ifBlank { "archive.zip" }.let {
             if (it.endsWith(".zip", ignoreCase = true)) it else "$it.zip"
-        }))
+        })
         val sources = entries.map { entry ->
             resolve(entry).also { require(it.isFile) { "Файл $entry не найден" } }
         }.filter { it.absolutePath != target.absolutePath }
@@ -152,6 +188,10 @@ class WorkspaceStore(context: Context) {
         /** Двоичное: текстом не читается. Архив пересылают, базу открывают через SQL. */
         private val DATABASE_EXTENSIONS = setOf("db", "sqlite", "sqlite3")
         private val BINARY_EXTENSIONS = setOf("zip") + DATABASE_EXTENSIONS
+
+        /** Имя каталога задачи выводим из её id так же строго, как имена файлов. */
+        fun safeScope(taskId: String): String =
+            taskId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(64).ifBlank { "task" }
 
         fun isText(name: String): Boolean = extensionOf(name) in TEXT_EXTENSIONS
         fun isDatabase(name: String): Boolean = extensionOf(name) in DATABASE_EXTENSIONS

@@ -160,6 +160,27 @@ import app.jarvis.data.ProviderSettings
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
+        item {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.AccountTree, null)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Параллельных задач: ${value.maxParallelTasks}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                }
+                Text(
+                    "Остальные ждут очереди. У каждой задачи своя папка файлов и своя tmux-сессия, " +
+                        "поэтому они не мешают друг другу; но больше задач — быстрее упрётесь в лимиты провайдера",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value.maxParallelTasks.toFloat(),
+                    { value = value.copy(maxParallelTasks = it.toInt()) },
+                    valueRange = 1f..4f,
+                    steps = 2
+                )
+            }
+        }
         item { SectionTitle("Промты", Icons.Default.Psychology) }
         item {
             Text(

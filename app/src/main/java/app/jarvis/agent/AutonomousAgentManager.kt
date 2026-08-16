@@ -106,6 +106,8 @@ class AutonomousAgentManager(
     fun delete(id: String) {
         workManager.cancelUniqueWork(workName(id))
         notifications.cancelProgress(id)
+        // Своя папка задачи уходит вместе с ней: иначе каталоги копились бы бесконечно.
+        runCatching { workspace.scoped(id).directory().deleteRecursively() }
         store.delete(id)
     }
 
@@ -138,6 +140,14 @@ class AutonomousAgentManager(
     fun runBatch(taskId: String, shouldContinue: () -> Boolean): AutonomousRunResult {
         var task = store.get(taskId) ?: return AutonomousRunResult.DONE
         if (!task.status.active) return AutonomousRunResult.DONE
+        // Свободен ли слот. Пул потоков WorkManager и так ограничивает параллельность, но он
+        // общий с другими воркерами; здесь считаются именно задачи, и число видно в настройках.
+        val limit = settings.get().maxParallelTasks.coerceIn(1, 4)
+        val running = store.all().count { it.id != taskId && it.status == AgentTaskStatus.RUNNING }
+        if (task.status != AgentTaskStatus.RUNNING && running >= limit) {
+            store.setStatus(taskId, AgentTaskStatus.QUEUED, "Ожидает очереди: занято $running из $limit")
+            return AutonomousRunResult.RETRY
+        }
         store.setStatus(taskId, AgentTaskStatus.RUNNING, task.currentAction)
         var messages = decodeMessages(task.checkpoint)
         var step = task.step
