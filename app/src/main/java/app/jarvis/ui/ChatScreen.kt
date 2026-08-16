@@ -315,7 +315,7 @@ import java.util.Locale
             }
             Row(Modifier.fillMaxWidth().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
                 IconButton(
-                    onClick = { picker.launch(arrayOf("text/*", "application/json")) },
+                    onClick = { picker.launch(arrayOf("*/*")) },
                     enabled = enabled
                 ) { Icon(Icons.Default.AttachFile, "Прикрепить файл") }
                 IconButton(onClick = onVoice, enabled = enabled) { Icon(Icons.Default.Mic, "Голосовой ввод") }

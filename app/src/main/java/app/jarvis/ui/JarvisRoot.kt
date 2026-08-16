@@ -66,7 +66,7 @@ fun JarvisRoot(container: AppContainer) {
     val autonomyVm: AutonomyViewModel = viewModel(key = "autonomy", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-            AutonomyViewModel(container.autonomous, container.sshProfiles) as T
+            AutonomyViewModel(container.autonomous, container.sshProfiles, container.workspace) as T
     })
     val filesVm: FilesViewModel = viewModel(key = "files", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

@@ -1,5 +1,11 @@
 package app.jarvis.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
@@ -97,6 +103,15 @@ fun AutonomyScreen(vm: AutonomyViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     var profileMenu by remember { mutableStateOf(false) }
     val selectedProfile = state.sshProfiles.firstOrNull { it.id == state.selectedProfileId }
+    val resolver = LocalContext.current.contentResolver
+    // Тип файла не фильтруем: система отдаёт .sql и .db как application/sql или
+    // octet-stream, и по типам они бы просто не выбирались. Годность решает импорт.
+    val objectivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.attach(resolver, it, toInstruction = false) }
+    }
+    val instructionPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.attach(resolver, it, toInstruction = true) }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().statusBarsPadding(),
@@ -138,6 +153,11 @@ fun AutonomyScreen(vm: AutonomyViewModel) {
                     minLines = 3,
                     maxLines = 7,
                     shape = RoundedCornerShape(6.dp)
+                )
+                AttachmentRow(
+                    files = state.objectiveAttachments,
+                    onPick = { objectivePicker.launch(arrayOf("*/*")) },
+                    onRemove = { vm.removeAttachment(it, fromInstruction = false) }
                 )
                 Spacer(Modifier.height(10.dp))
                 Box {
@@ -242,8 +262,11 @@ fun AutonomyScreen(vm: AutonomyViewModel) {
                     value = state.instruction,
                     status = task.status,
                     sending = state.sendingInstruction,
+                    attachments = state.instructionAttachments,
                     onValueChange = vm::updateInstruction,
-                    onSend = vm::sendInstruction
+                    onSend = vm::sendInstruction,
+                    onPick = { instructionPicker.launch(arrayOf("*/*")) },
+                    onRemoveAttachment = { vm.removeAttachment(it, fromInstruction = true) }
                 )
             }
             item {
@@ -272,8 +295,11 @@ private fun InstructionComposer(
     value: String,
     status: AgentTaskStatus,
     sending: Boolean,
+    attachments: List<String>,
     onValueChange: (String) -> Unit,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    onPick: () -> Unit,
+    onRemoveAttachment: (String) -> Unit
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -292,12 +318,13 @@ private fun InstructionComposer(
             maxLines = 5,
             shape = RoundedCornerShape(6.dp),
             trailingIcon = {
-                IconButton(onClick = onSend, enabled = value.isNotBlank() && !sending) {
+                IconButton(onClick = onSend, enabled = (value.isNotBlank() || attachments.isNotEmpty()) && !sending) {
                     if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     else Icon(Icons.AutoMirrored.Filled.Send, "Передать агенту")
                 }
             }
         )
+        AttachmentRow(files = attachments, onPick = onPick, onRemove = onRemoveAttachment)
         Spacer(Modifier.height(6.dp))
         Text(
             if (status.active) {
@@ -486,3 +513,39 @@ private fun eventColor(kind: AgentEventKind): Color = when (kind) {
 }
 
 private const val MIN_OBJECTIVE = 8
+
+/**
+ * Прикреплённые файлы задачи.
+ *
+ * Файл кладётся в общую рабочую папку, а его имя дописывается в текст: без имени агент не
+ * поймёт, какой из лежащих там файлов относится к делу.
+ */
+@Composable
+private fun AttachmentRow(files: List<String>, onPick: () -> Unit, onRemove: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onPick) {
+                Icon(Icons.Default.AttachFile, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Прикрепить файл")
+            }
+            if (files.isNotEmpty()) {
+                Text(
+                    "${files.size} шт.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        files.forEach { name ->
+            Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Description, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { onRemove(name) }, modifier = Modifier.size(30.dp)) {
+                    Icon(Icons.Default.Close, "Убрать", Modifier.size(15.dp))
+                }
+            }
+        }
+    }
+}
