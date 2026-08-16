@@ -140,14 +140,19 @@ class AutonomousAgentManager(
     fun runBatch(taskId: String, shouldContinue: () -> Boolean): AutonomousRunResult {
         var task = store.get(taskId) ?: return AutonomousRunResult.DONE
         if (!task.status.active) return AutonomousRunResult.DONE
+        val config = settings.get()
         // Свободен ли слот. Пул потоков WorkManager и так ограничивает параллельность, но он
         // общий с другими воркерами; здесь считаются именно задачи, и число видно в настройках.
-        val limit = settings.get().maxParallelTasks.coerceIn(1, 4)
+        val limit = config.maxParallelTasks.coerceIn(1, 4)
         val running = store.all().count { it.id != taskId && it.status == AgentTaskStatus.RUNNING }
         if (task.status != AgentTaskStatus.RUNNING && running >= limit) {
             store.setStatus(taskId, AgentTaskStatus.QUEUED, "Ожидает очереди: занято $running из $limit")
             return AutonomousRunResult.RETRY
         }
+        // Пороги остановки — настройка, а не константа: та же защита, что спасает от ночного
+        // холостого цикла, обрывала и длинную работу на полпути. Ноль означает «не останавливать».
+        val idleLimit = if (config.stopStalledTasks) AgentLoopGuard.MAX_IDLE_STEPS else 0
+        val stepLimit = if (config.stopStalledTasks) config.agentTaskSteps else 0
         store.setStatus(taskId, AgentTaskStatus.RUNNING, task.currentAction)
         var messages = decodeMessages(task.checkpoint)
         var step = task.step
@@ -197,11 +202,24 @@ class AutonomousAgentManager(
                         // Текст без действий — единственный случай, который не ловила защита
                         // от повторов: вызовов нет, повторять нечего, и задача прощалась
                         // с пользователем по кругу, пока он спал.
-                        if (AgentLoopGuard.isIdleLoop(messages, CONTINUE_PROMPT)) {
-                            val streak = AgentLoopGuard.idleStreak(messages, CONTINUE_PROMPT)
-                            return stopStalled(taskId, AgentLoopGuard.idleReason(streak), answer.text)
+                        val idle = AgentLoopGuard.idleStreak(messages, CONTINUE_PROMPT)
+                        if (AgentLoopGuard.isIdleLoop(messages, CONTINUE_PROMPT, idleLimit)) {
+                            return stopStalled(taskId, AgentLoopGuard.idleReason(idle), answer.text)
                         }
-                        messages = messages + ApiMessage("user", CONTINUE_PROMPT)
+                        // Останавливать запрещено — но и повторять то же «продолжай», которое
+                        // агент уже проигнорировал, бессмысленно: подсказка становится жёстче,
+                        // а в журнале видно, что задача буксует.
+                        val stuck = idle >= AgentLoopGuard.MAX_IDLE_STEPS
+                        if (stuck) {
+                            store.addEvent(
+                                taskId,
+                                AgentEventKind.WARNING,
+                                "Агент топчется на месте",
+                                "$idle хода подряд без действий. Остановка отключена в настройках, работа продолжается."
+                            )
+                        }
+                        val prompt = if (stuck) AgentLoopGuard.nudge(idle) else CONTINUE_PROMPT
+                        messages = messages + ApiMessage("user", prompt)
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Продолжаю до проверенного результата")
                     } else {
                         if (isRepeatedCallLoop(messages)) {
@@ -218,7 +236,7 @@ class AutonomousAgentManager(
                         }
                     }
                 }
-                if (AgentLoopGuard.isExhausted(step)) {
+                if (AgentLoopGuard.isExhausted(step, stepLimit)) {
                     return stopStalled(taskId, AgentLoopGuard.exhaustedReason(step), null)
                 }
                 task = store.get(taskId) ?: return AutonomousRunResult.DONE

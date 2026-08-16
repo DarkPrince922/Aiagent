@@ -18,6 +18,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.jarvis.data.AgentLoopGuard
 import app.jarvis.data.LlmEngine
 import app.jarvis.data.PromptDefaults
 import app.jarvis.data.ProviderSettings
@@ -178,6 +179,43 @@ import app.jarvis.data.ProviderSettings
                     { value = value.copy(maxParallelTasks = it.toInt()) },
                     valueRange = 1f..4f,
                     steps = 2
+                )
+            }
+        }
+        item {
+            ListItem(
+                headlineContent = { Text("Останавливать застрявшую задачу") },
+                supportingContent = {
+                    Text(
+                        "Выключите, если задача обрывается на полпути: тогда она идёт до finish_task или до вашей " +
+                            "кнопки «Стоп». Вместо остановки агент получит жёсткое напоминание, а в журнале появится " +
+                            "предупреждение. Включённой она сама прекращает работу, когда агент несколько ходов подряд " +
+                            "отвечает текстом и ничего не делает"
+                    )
+                },
+                leadingContent = { Icon(Icons.Default.Bolt, null) },
+                trailingContent = { Switch(value.stopStalledTasks, { value = value.copy(stopStalledTasks = it) }) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
+        if (value.stopStalledTasks) item {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.AllInclusive, null)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Потолок шагов задачи: ${value.agentTaskSteps}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                }
+                Text(
+                    "Сколько обращений к модели задача может сделать, прежде чем остановится сама. " +
+                        "Длинным задачам — 150–200",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value.agentTaskSteps.toFloat(),
+                    { value = value.copy(agentTaskSteps = it.toInt()) },
+                    valueRange = AgentLoopGuard.MIN_TASK_STEPS.toFloat()..AgentLoopGuard.MAX_TASK_STEPS.toFloat(),
+                    steps = (AgentLoopGuard.MAX_TASK_STEPS - AgentLoopGuard.MIN_TASK_STEPS) / 10 - 1
                 )
             }
         }

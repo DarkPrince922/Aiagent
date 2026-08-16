@@ -86,4 +86,40 @@ class AgentLoopGuardTest {
         assertTrue(AgentLoopGuard.MAX_IDLE_STEPS >= 2)
         assertTrue(AgentLoopGuard.MAX_TOTAL_STEPS > AgentLoopGuard.MAX_IDLE_STEPS)
     }
+
+    /**
+     * Защита от ночного цикла обрывала и длинную работу на полпути. Нулевой порог —
+     * это выключенная настройкой остановка: решает человек, а не счётчик.
+     */
+    @Test fun aZeroThresholdMeansTheTaskIsNeverStoppedByTheGuard() {
+        val messages = listOf(
+            assistant("а"), keepGoing(), assistant("б"), keepGoing(),
+            assistant("в"), keepGoing(), assistant("г")
+        )
+        assertEquals(4, AgentLoopGuard.idleStreak(messages, continuePrompt))
+        assertFalse(AgentLoopGuard.isIdleLoop(messages, continuePrompt, maxIdleSteps = 0))
+        assertFalse(AgentLoopGuard.isExhausted(10_000, limit = 0))
+        assertFalse(AgentLoopGuard.isExhausted(10_000, limit = -1))
+    }
+
+    @Test fun aCustomCeilingIsRespected() {
+        assertFalse(AgentLoopGuard.isExhausted(149, limit = 150))
+        assertTrue(AgentLoopGuard.isExhausted(150, limit = 150))
+        assertTrue(AgentLoopGuard.isIdleLoop(listOf(assistant("а")), continuePrompt, maxIdleSteps = 1))
+    }
+
+    /** Подсказка вместо остановки бесполезна, если не называет оба выхода из положения. */
+    @Test fun theNudgeNamesTheNumberAndBothWaysOut() {
+        val nudge = AgentLoopGuard.nudge(5)
+        assertTrue(nudge.contains("5"))
+        assertTrue(nudge.contains("finish_task"))
+        assertTrue(nudge.contains("инструмент"))
+    }
+
+    /** Настраиваемый потолок обязан включать значение по умолчанию, иначе слайдер его теряет. */
+    @Test fun theDefaultCeilingFitsInsideTheAdjustableRange() {
+        assertTrue(AgentLoopGuard.MIN_TASK_STEPS <= AgentLoopGuard.MAX_TOTAL_STEPS)
+        assertTrue(AgentLoopGuard.MAX_TOTAL_STEPS <= AgentLoopGuard.MAX_TASK_STEPS)
+        assertTrue(AgentLoopGuard.MIN_TASK_STEPS > AgentLoopGuard.MAX_IDLE_STEPS)
+    }
 }

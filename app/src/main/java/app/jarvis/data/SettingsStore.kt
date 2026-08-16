@@ -26,6 +26,9 @@ class SettingsStore(context: Context) {
         autonomyPrompt = prefs.getString("prompt_autonomy", null) ?: PromptDefaults.AUTONOMY,
         summaryPrompt = prefs.getString("prompt_summary", null) ?: PromptDefaults.SUMMARY,
         maxParallelTasks = prefs.getInt("max_parallel_tasks", 3).coerceIn(1, 4),
+        stopStalledTasks = prefs.getBoolean("stop_stalled_tasks", true),
+        agentTaskSteps = prefs.getInt("agent_task_steps", AgentLoopGuard.MAX_TOTAL_STEPS)
+            .coerceIn(AgentLoopGuard.MIN_TASK_STEPS, AgentLoopGuard.MAX_TASK_STEPS),
         summarizeAnswers = prefs.getBoolean("summarize_answers", true)
     )
     fun save(value: ProviderSettings) {
@@ -51,6 +54,8 @@ class SettingsStore(context: Context) {
         .putString("prompt_autonomy", PromptDefaults.orDefault(value.autonomyPrompt, PromptDefaults.AUTONOMY))
         .putString("prompt_summary", PromptDefaults.orDefault(value.summaryPrompt, PromptDefaults.SUMMARY))
         .putInt("max_parallel_tasks", value.maxParallelTasks.coerceIn(1, 4))
+        .putBoolean("stop_stalled_tasks", value.stopStalledTasks)
+        .putInt("agent_task_steps", value.agentTaskSteps.coerceIn(AgentLoopGuard.MIN_TASK_STEPS, AgentLoopGuard.MAX_TASK_STEPS))
         .putBoolean("summarize_answers", value.summarizeAnswers)
         .apply()
     }
