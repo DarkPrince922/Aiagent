@@ -75,5 +75,9 @@ data class Conversation(
     val id: String,
     val title: String,
     val createdAt: Long,
-    val updatedAt: Long
-)
+    val updatedAt: Long,
+    /** "chat" — обычный диалог, "agent" — журнал автономной задачи. */
+    val kind: String = ConversationStore.KIND_CHAT
+) {
+    val isAgent: Boolean get() = kind == ConversationStore.KIND_AGENT
+}

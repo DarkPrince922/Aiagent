@@ -471,6 +471,9 @@ internal object SshLedgerProtocol {
             emit_state() { printf '%s|STATE|%s\n' "${'$'}marker" "${'$'}1"; }
             emit_detail() { printf '%s|DETAIL|%s\n' "${'$'}marker" "${'$'}1"; }
             report() {
+              if [ -f "${'$'}op/session" ]; then
+                printf '%s|SESSION|%s\n' "${'$'}marker" "${'$'}(cat "${'$'}op/session")"
+              fi
               if [ -f "${'$'}op/exit" ]; then
                 emit_state COMPLETED
                 exit_value=${'$'}(tr -cd '0-9' < "${'$'}op/exit")
@@ -513,6 +516,8 @@ internal object SshLedgerProtocol {
             umask 077
             dir=${'$'}(cd "${'$'}(dirname "${'$'}0")" && pwd) || exit 125
             : > "${'$'}dir/running"
+            printf '%s\n' "${'$'}${'$'}" > "${'$'}dir/pid.tmp"
+            mv "${'$'}dir/pid.tmp" "${'$'}dir/pid"
             cd "${'$'}HOME" 2>/dev/null || cd / || exit 125
             sh "${'$'}dir/command.sh" > "${'$'}dir/stdout.tmp" 2> "${'$'}dir/stderr.tmp"
             code=${'$'}?
@@ -525,10 +530,20 @@ internal object SshLedgerProtocol {
             JARVIS_RUNNER
               mv "${'$'}op/runner.sh.tmp" "${'$'}op/runner.sh"
               chmod 700 "${'$'}op/runner.sh"
-              nohup "${'$'}op/runner.sh" >/dev/null 2>&1 </dev/null &
-              runner_pid=${'$'}!
-              printf '%s\n' "${'$'}runner_pid" > "${'$'}op/pid.tmp"
-              mv "${'$'}op/pid.tmp" "${'$'}op/pid"
+              session="jarvis-${'$'}(printf '%s' "$operationKey" | cut -c1-12)"
+              printf '%s\n' "${'$'}session" > "${'$'}op/session.tmp"
+              mv "${'$'}op/session.tmp" "${'$'}op/session"
+              if command -v tmux >/dev/null 2>&1 && tmux new-session -d -s "${'$'}session" "${'$'}op/runner.sh" 2>/dev/null; then
+                :
+              else
+                rm -f "${'$'}op/session"
+                nohup "${'$'}op/runner.sh" >/dev/null 2>&1 </dev/null &
+              fi
+              waited=0
+              while [ ! -f "${'$'}op/pid" ] && [ "${'$'}waited" -lt 20 ]; do
+                waited=${'$'}((waited + 1))
+                sleep 0.1 2>/dev/null || sleep 1
+              done
             fi
             if [ ! -f "${'$'}op/hash" ]; then
               emit_state UNKNOWN
@@ -604,11 +619,19 @@ internal object SshLedgerProtocol {
                 append(stdout)
                 if (stderr.isNotBlank()) append(if (isEmpty()) "" else "\n").append(stderr)
                 if (values["TRUNCATED"] == "1") append(if (isEmpty()) "" else "\n").append("[вывод сокращён]")
+                values["SESSION"]?.takeIf { it.isNotBlank() }?.let {
+                    append(if (isEmpty()) "" else "\n").append("[tmux-сессия: ").append(it).append("]")
+                }
             }.take(64_000).ifBlank { "Команда завершилась без вывода" }
             return SshResult(output, exitCode, fingerprint, SshPhase.COMPLETED)
         }
         if (phase == SshPhase.RUNNING) {
-            return SshResult("Операция выполняется на сервере", -1, fingerprint, phase)
+            // Имя сессии нужно и агенту, и человеку: к работающей команде можно подключиться
+            // с любой машины через tmux attach, не дожидаясь конца.
+            val session = values["SESSION"]?.takeIf { it.isNotBlank() }
+            val text = if (session == null) "Операция выполняется на сервере"
+                else "Операция выполняется в tmux-сессии $session (подключиться: tmux attach -t $session)"
+            return SshResult(text, -1, fingerprint, phase)
         }
         return unknownResult(fingerprint, values["DETAIL"] ?: "UNKNOWN")
     }

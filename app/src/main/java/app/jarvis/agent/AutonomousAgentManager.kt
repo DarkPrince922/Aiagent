@@ -68,7 +68,7 @@ class AutonomousAgentManager(
         if (profile != null && autoApproveSsh) {
             require(profile.fingerprint.isNotBlank()) { "Сначала проверьте SSH-профиль и закрепите fingerprint хоста" }
         }
-        val conversation = conversations.create()
+        val conversation = conversations.create(kind = ConversationStore.KIND_AGENT)
         conversations.saveMessage(conversation.id, Message(role = "user", text = "[Автономная задача]\n$goal"))
         conversations.titleFromFirstMessage(conversation.id, goal)
         val checkpoint = encodeMessages(initialMessages(goal, profile?.id, profile?.name, autoApproveSsh))

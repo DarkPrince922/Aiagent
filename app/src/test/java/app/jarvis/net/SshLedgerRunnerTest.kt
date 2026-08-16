@@ -1,5 +1,6 @@
 package app.jarvis.net
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,5 +29,37 @@ class SshLedgerRunnerTest {
         // Без уборки каталог ~/.cache/jarvis-agent/ops рос на каждой операции бесконечно.
         assertTrue(payload.contains("find \"\$base\""))
         assertTrue(payload.contains("-mtime +7"))
+    }
+
+    /**
+     * Команда живёт в tmux-сессии, поэтому переживает обрыв связи и доступна для attach.
+     * Откат на nohup обязателен: tmux есть не на каждом сервере, и без него агент
+     * перестал бы работать там, где раньше работал.
+     */
+    @Test fun theCommandRunsInsideTmuxWithAFallback() {
+        assertTrue("Ожидался запуск в tmux", payload.contains("tmux new-session -d -s"))
+        assertTrue("Ожидалась проверка наличия tmux", payload.contains("command -v tmux"))
+        assertTrue("Ожидался откат на nohup", payload.contains("nohup \"\$op/runner.sh\""))
+    }
+
+    @Test fun theSessionNameIsStableAndReportedBack() {
+        val other = SshLedgerProtocol.dispatchPayload("task-1-call-1", "ls")
+        assertEquals("Одна операция — одно имя сессии", payload, other)
+        val changed = SshLedgerProtocol.dispatchPayload("task-1-call-2", "ls")
+        assertFalse("Разные операции не должны делить сессию", payload == changed)
+        assertTrue("Имя сессии должно уходить в отчёт", payload.contains("|SESSION|"))
+    }
+
+    /** Без своего pid liveness-проверка сломалась бы: tmux-клиент завершается сразу. */
+    @Test fun theRunnerRecordsItsOwnPid() {
+        val runner = payload.substringAfter("JARVIS_RUNNER").substringBefore("JARVIS_RUNNER")
+        assertTrue("Runner должен писать собственный pid", runner.contains("\$\$"))
+        assertTrue(runner.contains("\$dir/pid.tmp"))
+        assertFalse("Pid родителя от tmux бесполезен", payload.contains("runner_pid=\$!"))
+    }
+
+    @Test fun theDispatcherWaitsForThePidBeforeReporting() {
+        // Иначе первый же отчёт видит «нет pid и нет exit» и объявляет операцию потерянной.
+        assertTrue(payload.contains("while [ ! -f \"\$op/pid\" ]"))
     }
 }

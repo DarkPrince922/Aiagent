@@ -6,20 +6,24 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import java.util.UUID
 
-class ConversationStore(context: Context) : SQLiteOpenHelper(context, "conversations.db", null, 1) {
+class ConversationStore(context: Context) : SQLiteOpenHelper(context, "conversations.db", null, 2) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '$KIND_CHAT')")
         db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, detail TEXT, created INTEGER NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE)")
         db.execSQL("CREATE INDEX messages_conversation_created ON messages(conversation_id, created)")
     }
 
-    // Схема пока первой версии; будущие изменения добавлять сюда как ALTER TABLE по oldVersion.
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // v2: разговоры автономных задач помечаются, чтобы не занимать место активного чата.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE conversations ADD COLUMN kind TEXT NOT NULL DEFAULT '$KIND_CHAT'")
+        }
+    }
 
     // По умолчанию SQLiteOpenHelper бросает исключение при откате версии и роняет приложение.
     override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
@@ -29,19 +33,32 @@ class ConversationStore(context: Context) : SQLiteOpenHelper(context, "conversat
             if (cursor.moveToFirst()) cursor.getLong(0) else 0L
         }
 
-    @Synchronized fun ensureConversation(): Conversation = list().firstOrNull() ?: create()
+    /**
+     * Чат, который открывается по умолчанию.
+     *
+     * Разговоры автономных задач пропускаем: задача пишет в свой чат на каждом шаге, он
+     * всплывает наверх по времени обновления, и приложение открывало его вместо
+     * пользовательского — сообщения человека и агента оказывались вперемешку.
+     */
+    @Synchronized fun ensureConversation(): Conversation =
+        list().firstOrNull { it.kind == KIND_CHAT } ?: create()
 
-    @Synchronized fun create(title: String = "Новый чат"): Conversation {
+    @Synchronized fun create(title: String = "Новый чат", kind: String = KIND_CHAT): Conversation {
         val now = System.currentTimeMillis()
-        val conversation = Conversation(UUID.randomUUID().toString(), title, now, now)
+        val conversation = Conversation(UUID.randomUUID().toString(), title, now, now, kind)
         writableDatabase.insertOrThrow("conversations", null, ContentValues().apply {
-            put("id", conversation.id); put("title", conversation.title); put("created", now); put("updated", now)
+            put("id", conversation.id); put("title", conversation.title)
+            put("created", now); put("updated", now); put("kind", kind)
         })
         return conversation
     }
 
-    @Synchronized fun list(): List<Conversation> = readableDatabase.query("conversations", arrayOf("id", "title", "created", "updated"), null, null, null, null, "updated DESC").use { cursor ->
-        buildList { while (cursor.moveToNext()) add(Conversation(cursor.getString(0), cursor.getString(1), cursor.getLong(2), cursor.getLong(3))) }
+    @Synchronized fun list(): List<Conversation> = readableDatabase.query("conversations", arrayOf("id", "title", "created", "updated", "kind"), null, null, null, null, "updated DESC").use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(
+                Conversation(cursor.getString(0), cursor.getString(1), cursor.getLong(2), cursor.getLong(3), cursor.getString(4) ?: KIND_CHAT)
+            )
+        }
     }
 
     @Synchronized fun messages(conversationId: String): List<Message> = readableDatabase.query("messages", arrayOf("id", "role", "text", "state", "detail"), "conversation_id=?", arrayOf(conversationId), null, null, "created ASC").use { cursor ->
@@ -78,5 +95,10 @@ class ConversationStore(context: Context) : SQLiteOpenHelper(context, "conversat
 
     private fun touch(id: String, time: Long) {
         writableDatabase.update("conversations", ContentValues().apply { put("updated", time) }, "id=?", arrayOf(id))
+    }
+
+    companion object {
+        const val KIND_CHAT = "chat"
+        const val KIND_AGENT = "agent"
     }
 }

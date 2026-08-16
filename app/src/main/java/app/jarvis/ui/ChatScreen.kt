@@ -165,8 +165,18 @@ import java.util.Locale
                 val active = conversation.id == activeId
                 Surface(onClick = { if (enabled) select(conversation.id) }, shape = RoundedCornerShape(8.dp), color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 9.dp, bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (active) Icons.Default.ChatBubble else Icons.Default.ChatBubbleOutline, null)
-                        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(conversation.title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(conversation.updatedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        // Журнал автономной задачи отличается значком: открыв его по ошибке,
+                        // легко решить, что агент пишет в твой чат сам по себе.
+                        Icon(
+                            when {
+                                conversation.isAgent -> Icons.Default.AutoMode
+                                active -> Icons.Default.ChatBubble
+                                else -> Icons.Default.ChatBubbleOutline
+                            },
+                            null,
+                            tint = if (conversation.isAgent) MaterialTheme.colorScheme.tertiary else LocalContentColor.current
+                        )
+                        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(conversation.title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text((if (conversation.isAgent) "Задача · " else "") + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(conversation.updatedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         IconButton(onClick = { if (enabled) delete(conversation) }, enabled = enabled) { Icon(Icons.Default.DeleteOutline, "Удалить чат") }
                     }
                 }
