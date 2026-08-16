@@ -103,6 +103,7 @@ class ToolRegistry(
         ToolInfo("create_zip", "Собрать архив", "Упаковывает файлы рабочей папки в zip", "Файлы", "folder_zip", ToolRisk.CHANGES_DEVICE),
         ToolInfo("upload_file", "Файл на сервер", "Кладёт файл из рабочей папки на сервер по SFTP", "Файлы", "cloud_upload", ToolRisk.CHANGES_DEVICE),
         ToolInfo("sql_schema", "Схема базы", "Показывает таблицы и их структуру", "Базы данных", "schema", ToolRisk.READ_ONLY),
+        ToolInfo("sql_import", "Импорт дампа", "Превращает .sql-дамп в базу с таблицами", "Базы данных", "upload_file", ToolRisk.CHANGES_DEVICE),
         ToolInfo("sql_query", "SQL-запрос", "Читает данные из SQLite-базы", "Базы данных", "table_view", ToolRisk.READ_ONLY),
         ToolInfo("sql_exec", "Изменить базу", "Выполняет INSERT, UPDATE, DELETE после подтверждения", "Базы данных", "edit_note", ToolRisk.CHANGES_DEVICE),
         ToolInfo("sql_export", "Выгрузить в файл", "Сохраняет результат запроса в CSV или Markdown", "Базы данных", "file_download", ToolRisk.CHANGES_DEVICE),
@@ -180,6 +181,12 @@ class ToolRegistry(
             "Таблицы SQLite-базы из рабочей папки: имена, число строк и DDL. С этого начинают работу с незнакомой базой.",
             props("name" to "string"),
             listOf("name")
+        ))
+        put(schema(
+            "sql_import",
+            "Залить SQL-дамп (.sql) из рабочей папки в базу и получить таблицы, с которыми можно работать. Дамп — это текст: посчитать по нему ничего нельзя, пока он не импортирован. Ошибочные операторы пропускаются, отчёт показывает, что не применилось.",
+            props("script" to "string", "database" to "string"),
+            listOf("script")
         ))
         put(schema(
             "sql_query",
@@ -363,6 +370,9 @@ class ToolRegistry(
                 )
             }
             "sql_schema" -> done(sql.schema(args.string("name")))
+            // Импорт создаёт базу в рабочей папке приложения — это не внешнее действие,
+            // поэтому в чате он не спрашивает подтверждения, как и write_file.
+            "sql_import" -> done(sql.import(args.string("script"), args.optString("database")))
             "sql_query" -> done(
                 SqlService.render(
                     sql.query(args.string("name"), args.string("query"), args.optInt("limit", SqlService.DEFAULT_ROWS))

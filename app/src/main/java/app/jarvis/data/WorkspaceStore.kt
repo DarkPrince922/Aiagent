@@ -148,7 +148,7 @@ class WorkspaceStore(context: Context) {
         const val MAX_FILE_BYTES = 4 * 1024 * 1024
         const val DEFAULT_CHUNK_CHARS = 30_000
         const val MAX_CHUNK_CHARS = 120_000
-        private val TEXT_EXTENSIONS = setOf("txt", "json", "md", "csv", "log", "yaml", "yml", "xml")
+        private val TEXT_EXTENSIONS = setOf("txt", "json", "md", "csv", "log", "yaml", "yml", "xml", "sql")
         /** Двоичное: текстом не читается. Архив пересылают, базу открывают через SQL. */
         private val DATABASE_EXTENSIONS = setOf("db", "sqlite", "sqlite3")
         private val BINARY_EXTENSIONS = setOf("zip") + DATABASE_EXTENSIONS
