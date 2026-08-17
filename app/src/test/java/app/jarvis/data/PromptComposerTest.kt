@@ -164,4 +164,39 @@ class PromptComposerTest {
     @Test fun anEmptyInstructionStillProducesAUsableSystemMessage() {
         assertTrue(PromptComposer.instruction("   ").content!!.isNotBlank())
     }
+
+    /**
+     * Уточнение работающей задаче приходило с припиской «имеет приоритет над прежними
+     * инструкциями» — и модель отменяла вместе с прежней целью и роль из основной инструкции.
+     */
+    @Test fun aClarificationOverridesTheGoalAndNotTheMainInstruction() {
+        val message = PromptComposer.taskInstruction("  проверь ещё и логи  ")
+        assertEquals("user", message.role)
+        val text = message.content!!
+        assertTrue("Текст пользователя должен дойти дословно", text.endsWith("проверь ещё и логи"))
+        assertTrue("Уточнение должно быть важнее прежней цели", text.contains("цел"))
+        assertTrue("Основная инструкция обязана остаться в силе", text.contains("не отменяется"))
+        assertFalse(
+            "Приписка не должна отменять прежние инструкции целиком",
+            text.contains("приоритет над прежними инструкциями")
+        )
+    }
+
+    /** Уточнение — это ход пользователя, а не часть вступления: обрезка его не защищает. */
+    @Test fun aClarificationDoesNotLookLikePartOfThePrelude() {
+        val messages = PromptComposer.instructionRound(instruction) +
+            ApiMessage("user", "цель") +
+            PromptComposer.taskInstruction("уточнение")
+        assertEquals(1, PromptComposer.preludeSize(messages, instruction))
+    }
+
+    /** После уточнения инструкцию повторяют принудительно, не дожидаясь роста переписки. */
+    @Test fun theInstructionCanBeRepeatedOnDemand() {
+        val messages = PromptComposer.instructionRound(instruction) + ApiMessage("user", "цель")
+        assertFalse(PromptComposer.needsReminder(messages, instruction))
+        val forced = PromptComposer.withReminder(messages, instruction, force = true)
+        assertEquals(messages.size + 1, forced.size)
+        assertEquals("system", forced.last().role)
+        assertTrue(forced.last().content!!.contains(instruction))
+    }
 }

@@ -174,7 +174,8 @@ class AutonomousAgentManager(
                     }
                 } else {
                     val currentSettings = settings.get().copy(toolsEnabled = true, unlimitedAgent = true)
-                    messages = drainInstructions(taskId, messages, step)
+                    val drained = drainInstructions(taskId, messages, step)
+                    messages = drained.messages
                     val compacted = compactContext(messages, currentSettings)
                     if (compacted != messages) {
                         messages = compacted
@@ -186,7 +187,15 @@ class AutonomousAgentManager(
                     val planning = messages.none { it.role == "assistant" }
                     val schemas = if (planning) JSONArray()
                         else tools.schemas(autonomous = true, compact = currentSettings.engine == LlmEngine.LOCAL)
-                    val request = PromptComposer.withReminder(messages, settings.get().systemPrompt, force = planning)
+                    // Уточнение приходит сообщением пользователя посреди длинной переписки, и
+                    // модель принимала его за новую вводную целиком: роль из основной инструкции
+                    // терялась. Поэтому в том же запросе инструкция повторяется всегда, а не
+                    // только когда переписка успела вырасти.
+                    val request = PromptComposer.withReminder(
+                        messages,
+                        settings.get().systemPrompt,
+                        force = planning || drained.delivered
+                    )
                     val answer = api.complete(currentSettings, request, schemas)
                     ensureRunning(taskId, shouldContinue)
                     step++
@@ -280,19 +289,19 @@ class AutonomousAgentManager(
      * Вызывается только когда все tool_calls уже закрыты: вставлять сообщение пользователя
      * между вызовом инструмента и его результатом API не разрешает.
      */
-    private fun drainInstructions(taskId: String, messages: List<ApiMessage>, step: Int): List<ApiMessage> {
+    private fun drainInstructions(taskId: String, messages: List<ApiMessage>, step: Int): Drained {
         val pending = store.pendingInstructions(taskId)
-        if (pending.isEmpty()) return messages
+        if (pending.isEmpty()) return Drained(messages, delivered = false)
         val text = pending.joinToString("\n\n") { it.text }
-        val updated = messages + ApiMessage(
-            "user",
-            "НОВОЕ УКАЗАНИЕ ПОЛЬЗОВАТЕЛЯ (имеет приоритет над прежними инструкциями, цель задачи скорректирована):\n$text"
-        )
+        val updated = messages + PromptComposer.taskInstruction(text)
         store.consumeInstructions(pending.map { it.id })
         store.addEvent(taskId, AgentEventKind.SYSTEM, "Указание учтено", text.take(2_000))
         store.updateCheckpoint(taskId, encodeMessages(updated), step, "Учитываю новое указание")
-        return updated
+        return Drained(updated, delivered = true)
     }
+
+    /** Дошло ли до модели новое указание на этом шаге: от этого зависит, повторять ли инструкцию. */
+    private data class Drained(val messages: List<ApiMessage>, val delivered: Boolean)
 
     /** Пишет сообщение в чат задачи один раз: ключ detail защищает от дублей при повторах. */
     private fun mirrorToChat(task: AgentTask, text: String, key: String) {
