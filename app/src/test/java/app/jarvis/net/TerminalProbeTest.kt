@@ -72,13 +72,24 @@ class TerminalProbeTest {
         assertTrue("В строке должна быть команда: ${states["aaaa1111"]}", states["aaaa1111"]!!.contains("echo первая"))
     }
 
-    /** Живой процесс отличается от мёртвого: pid проверяется, а не принимается на слово. */
+    /**
+     * Живой процесс отличается от мёртвого: pid проверяется, а не принимается на слово.
+     *
+     * Настоящий живой pid берём у самого shell: в юнит-тестах Android компиляция идёт против
+     * android.jar, где `ProcessHandle` из Java 9 отсутствует.
+     */
     @Test fun aRunningOperationIsReportedAsRunning() {
         val home = createTempDir()
-        val dir = operation(home, "cccc3333", "sleep 100", "", exit = null)
-        File(dir, "pid").writeText("${ProcessHandle.current().pid()}\n")
-        val (_, out) = sh(TerminalProbe.OPERATIONS, home)
-        assertTrue(out.contains("выполняется"))
+        operation(home, "cccc3333", "sleep 100", "", exit = null)
+        val script = """
+            sleep 30 &
+            bg=${'$'}!
+            printf '%s\n' "${'$'}bg" > "${'$'}HOME/.cache/jarvis-agent/ops/cccc3333/pid"
+            ${TerminalProbe.OPERATIONS}
+            kill "${'$'}bg" 2>/dev/null
+        """.trimIndent()
+        val (_, out) = sh(script, home)
+        assertTrue("Живая операция должна быть видна как выполняющаяся: $out", out.contains("выполняется"))
     }
 
     @Test fun anEmptyLedgerIsNotAnError() {
