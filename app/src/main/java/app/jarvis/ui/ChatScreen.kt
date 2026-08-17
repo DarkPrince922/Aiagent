@@ -87,6 +87,15 @@ import java.util.Locale
                             }
                         }
                     }
+                    // Авто-режим переключается там же, где работают: возвращаться в настройки
+                    // ради одного тумблера посреди разговора неудобно.
+                    IconButton(onClick = vm::toggleAutoApprove, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            if (state.autoApprove) Icons.Default.Bolt else Icons.Default.OfflineBolt,
+                            if (state.autoApprove) "Авто-режим включён" else "Авто-режим выключен",
+                            tint = if (state.autoApprove) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = { historyOpen = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.History, "История чатов") }
                     IconButton(onClick = vm::newConversation, enabled = !state.sending && state.pending == null, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.EditNote, "Новый чат") }
                     IconButton(onClick = openSettings, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Settings, "Настройки") }

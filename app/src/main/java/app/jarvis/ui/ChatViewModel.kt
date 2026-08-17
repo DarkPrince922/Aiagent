@@ -36,6 +36,8 @@ data class ChatState(
     val attachments: List<String> = emptyList(),
     /** Инструменты выключены в настройках: агент не сможет ни читать файлы, ни ходить в сеть. */
     val toolsDisabled: Boolean = false,
+    /** Действия выполняются без вопроса «разрешить?». */
+    val autoApprove: Boolean = false,
     /** Результат проверки «доходит ли инструкция до модели»; null — проверка не запускалась. */
     val promptCheck: PromptInspection? = null,
     val promptChecking: Boolean = false,
@@ -63,7 +65,10 @@ class ChatViewModel(
             }
             mutable.value = mutable.value.copy(conversations = initial.first, activeConversationId = initial.second, messages = initial.third, loading = false)
         }
-        mutable.value = mutable.value.copy(toolsDisabled = !repository.settings().toolsEnabled)
+        mutable.value = mutable.value.copy(
+            toolsDisabled = !repository.settings().toolsEnabled,
+            autoApprove = repository.settings().autoApprove
+        )
         val readiness = repository.settings().readinessError
         // Иначе в локальном режиме шапка советовала бы добавить API-ключ, который там не нужен.
         if (readiness == null) checkConnection() else mutable.value = mutable.value.copy(statusText = readiness)
@@ -82,6 +87,24 @@ class ChatViewModel(
     }
 
     fun updateDraft(value: String) { mutable.value = mutable.value.copy(draft = value) }
+
+    /**
+     * Включает и выключает выполнение без подтверждений.
+     *
+     * Настройки читаются и пишутся через Keystore, поэтому не на главном потоке; состояние в
+     * шапке обновляется сразу, чтобы кнопка отвечала на нажатие мгновенно.
+     */
+    fun toggleAutoApprove() {
+        val next = !mutable.value.autoApprove
+        mutable.value = mutable.value.copy(
+            autoApprove = next,
+            banner = if (next) "Авто-режим: действия выполняются без подтверждения" else "Авто-режим выключен: опасные действия снова спрашивают"
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = repository.settings()
+            repository.saveSettings(current.copy(autoApprove = next))
+        }
+    }
 
     /**
      * Кладёт выбранный файл в рабочую папку и прикрепляет к следующему сообщению.
@@ -234,7 +257,7 @@ class ChatViewModel(
 
     fun saveSettings(settings: ProviderSettings) {
         repository.saveSettings(settings)
-        mutable.value = mutable.value.copy(toolsDisabled = !settings.toolsEnabled)
+        mutable.value = mutable.value.copy(toolsDisabled = !settings.toolsEnabled, autoApprove = settings.autoApprove)
         checkConnection(settings)
     }
 

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +49,7 @@ private enum class Destination(val label: String) {
     CHAT("Чат"),
     AUTONOMY("Агент"),
     FILES("Файлы"),
+    TERMINAL("Терминал"),
     TOOLS("Инструменты"),
     SERVERS("Серверы"),
     SETTINGS("Настройки")
@@ -72,6 +74,11 @@ fun JarvisRoot(container: AppContainer) {
         @Suppress("UNCHECKED_CAST")
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
             FilesViewModel(container.workspace) as T
+    })
+    val terminalVm: TerminalViewModel = viewModel(key = "terminal", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+            TerminalViewModel(container.sshProfiles, container.ssh) as T
     })
     val modelsVm: ModelsViewModel = viewModel(key = "models", factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -98,6 +105,7 @@ fun JarvisRoot(container: AppContainer) {
                                         Destination.CHAT -> Icons.Default.ChatBubble
                                         Destination.AUTONOMY -> Icons.Default.AutoMode
                                         Destination.FILES -> Icons.Default.Folder
+                                        Destination.TERMINAL -> Icons.Default.Terminal
                                         Destination.TOOLS -> Icons.Default.Build
                                         Destination.SERVERS -> Icons.Default.Dns
                                         Destination.SETTINGS -> Icons.Default.Settings
@@ -150,6 +158,12 @@ fun JarvisRoot(container: AppContainer) {
                     Destination.FILES -> {
                         LaunchedEffect(Unit) { filesVm.refresh() }
                         FilesScreen(filesVm, container.workspace)
+                    }
+                    // Список сессий живёт на сервере: при каждом входе он перечитывается,
+                    // иначе видно состояние на момент прошлого визита.
+                    Destination.TERMINAL -> {
+                        LaunchedEffect(Unit) { terminalVm.refresh() }
+                        TerminalScreen(terminalVm)
                     }
                     Destination.TOOLS -> ToolsScreen(vm.tools) { prompt ->
                         vm.prefill(prompt)

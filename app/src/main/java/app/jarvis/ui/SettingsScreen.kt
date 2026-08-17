@@ -111,6 +111,21 @@ import app.jarvis.data.ProviderSettings
         }
         item {
             ListItem(
+                headlineContent = { Text("Авто-режим в чате") },
+                supportingContent = {
+                    Text(
+                        "Выполнять действия без вопроса «разрешить?»: SSH-команды, запись файлов на сервер, " +
+                            "заметки, буфер обмена. В автономной задаче так и было всегда. Переключается ещё и " +
+                            "молнией в шапке чата"
+                    )
+                },
+                leadingContent = { Icon(Icons.Default.Bolt, null) },
+                trailingContent = { Switch(value.autoApprove, { value = value.copy(autoApprove = it) }) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
+        item {
+            ListItem(
                 headlineContent = { Text("Без лимита шагов") },
                 supportingContent = { Text("Агент работает до результата или нажатия «Стоп»; повторяющиеся циклы блокируются") },
                 leadingContent = { Icon(Icons.Default.AllInclusive, null) },

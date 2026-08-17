@@ -18,6 +18,7 @@ class SettingsStore(context: Context) {
         agentSteps = prefs.getInt("agent_steps", ProviderSettings().agentSteps),
         unlimitedAgent = prefs.getBoolean("unlimited_agent", false),
         toolsEnabled = prefs.getBoolean("tools_enabled", true),
+        autoApprove = prefs.getBoolean("auto_approve", false),
         answerBeforeTools = prefs.getBoolean("answer_before_tools", true),
         primePrompt = prefs.getBoolean("prime_prompt", true),
         instructionAsUserTurn = prefs.getBoolean("instruction_as_user", false),
@@ -41,6 +42,7 @@ class SettingsStore(context: Context) {
         .putInt("agent_steps", value.agentSteps.coerceIn(1, 20))
         .putBoolean("unlimited_agent", value.unlimitedAgent)
         .putBoolean("tools_enabled", value.toolsEnabled)
+        .putBoolean("auto_approve", value.autoApprove)
         .putBoolean("answer_before_tools", value.answerBeforeTools)
         .putBoolean("prime_prompt", value.primePrompt)
         .putBoolean("instruction_as_user", value.instructionAsUserTurn)

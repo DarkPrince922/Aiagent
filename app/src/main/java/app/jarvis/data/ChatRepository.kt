@@ -90,7 +90,7 @@ class ChatRepository(
         val result = if (approved) tools.execute(call.name, call.arguments, true) else app.jarvis.tools.ToolResult("Пользователь отклонил действие")
         var continued = action.messages + ApiMessage("tool", result.content, toolCallId = call.id)
         action.calls.drop(1).forEachIndexed { index, nextCall ->
-            val nextResult = tools.execute(nextCall.name, nextCall.arguments)
+            val nextResult = tools.execute(nextCall.name, nextCall.arguments, confirmed = action.settings.autoApprove)
             if (nextResult.needsConfirmation) {
                 return@runCatching AgentReply("Нужно ваше подтверждение", PendingAgentAction(nextResult.prompt, continued, action.calls.drop(index + 1), action.settings))
             }
@@ -203,7 +203,9 @@ class ChatRepository(
             if (answer.text.isNotBlank()) onInterim(answer.text)
             answer.toolCalls.forEachIndexed { index, call ->
                 onProgress("Инструмент: ${call.name}")
-                val result = tools.execute(call.name, call.arguments)
+                // Авто-режим: подтверждение считается уже данным — один раз тумблером,
+                // вместо вопроса на каждое действие.
+                val result = tools.execute(call.name, call.arguments, confirmed = settings.autoApprove)
                 if (result.needsConfirmation) {
                     return AgentReply("Нужно ваше подтверждение", PendingAgentAction(result.prompt, messages, answer.toolCalls.drop(index), settings), fallbackNotice)
                 }
