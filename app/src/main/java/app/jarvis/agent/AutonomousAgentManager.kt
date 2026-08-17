@@ -9,7 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import app.jarvis.data.AgentEventKind
-import app.jarvis.data.AgentLoopGuard
+import app.jarvis.data.AgentAnswerPolicy
 import app.jarvis.data.AgentOperationStatus
 import app.jarvis.data.AgentTask
 import app.jarvis.data.AgentTaskEvent
@@ -152,10 +152,6 @@ class AutonomousAgentManager(
             store.setStatus(taskId, AgentTaskStatus.QUEUED, "Ожидает очереди: занято $running из $limit")
             return AutonomousRunResult.RETRY
         }
-        // Пороги остановки — настройка, а не константа: та же защита, что спасает от ночного
-        // холостого цикла, обрывала и длинную работу на полпути. Ноль означает «не останавливать».
-        val idleLimit = if (config.stopStalledTasks) AgentLoopGuard.MAX_IDLE_STEPS else 0
-        val stepLimit = if (config.stopStalledTasks) config.agentTaskSteps else 0
         store.setStatus(taskId, AgentTaskStatus.RUNNING, task.currentAction)
         var messages = decodeMessages(task.checkpoint)
         var step = task.step
@@ -205,27 +201,13 @@ class AutonomousAgentManager(
                             // а не пересказ приложением того, что модель уже сказала.
                             store.get(taskId)?.let { mirrorToChat(it, answer.text, "agent-answer:${it.id}-$step") }
                         }
-                        // Текст без действий — единственный случай, который не ловила защита
-                        // от повторов: вызовов нет, повторять нечего, и задача прощалась
-                        // с пользователем по кругу, пока он спал.
-                        val idle = AgentLoopGuard.idleStreak(messages, CONTINUE_PROMPT)
-                        if (AgentLoopGuard.isIdleLoop(messages, CONTINUE_PROMPT, idleLimit)) {
-                            return stopStalled(taskId, AgentLoopGuard.idleReason(idle), answer.text)
+                        // Ответ текстом больше не повод гонять «продолжай» по кругу: если
+                        // работать модель больше не собирается, этот ответ и есть результат.
+                        val decision = AgentAnswerPolicy.decide(messages, CONTINUE_PROMPT, planning)
+                        if (decision == AgentAnswerPolicy.Decision.FINISH && answer.text.isNotBlank()) {
+                            return finishWithAnswer(taskId, answer.text, messages, step)
                         }
-                        // Останавливать запрещено — но и повторять то же «продолжай», которое
-                        // агент уже проигнорировал, бессмысленно: подсказка становится жёстче,
-                        // а в журнале видно, что задача буксует.
-                        val stuck = idle >= AgentLoopGuard.MAX_IDLE_STEPS
-                        if (stuck) {
-                            store.addEvent(
-                                taskId,
-                                AgentEventKind.WARNING,
-                                "Агент топчется на месте",
-                                "$idle хода подряд без действий. Остановка отключена в настройках, работа продолжается."
-                            )
-                        }
-                        val prompt = if (stuck) AgentLoopGuard.nudge(idle) else CONTINUE_PROMPT
-                        messages = messages + ApiMessage("user", prompt)
+                        messages = messages + ApiMessage("user", CONTINUE_PROMPT)
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Продолжаю до проверенного результата")
                     } else {
                         // Текст, сказанный перед вызовами, — такой же ответ: он тоже идёт в чат,
@@ -247,9 +229,6 @@ class AutonomousAgentManager(
                             answer.toolCalls.forEach { store.planOperation(taskId, it.id, it.name, it.arguments.toString()) }
                         }
                     }
-                }
-                if (AgentLoopGuard.isExhausted(step, stepLimit)) {
-                    return stopStalled(taskId, AgentLoopGuard.exhaustedReason(step), null)
                 }
                 task = store.get(taskId) ?: return AutonomousRunResult.DONE
                 notifications.updateProgress(task)
@@ -489,17 +468,22 @@ ${workspaceContext()}
      * бы в тот же круг. Причина уходит и в журнал, и в чат, и в уведомление — пользователь
      * мог не смотреть на экран часами.
      */
-    private fun stopStalled(taskId: String, reason: String, lastText: String?): AutonomousRunResult {
-        val summary = buildString {
-            append(reason)
-            if (!lastText.isNullOrBlank()) append("\n\nПоследний ответ агента: ").append(lastText.take(500))
-        }
-        store.setStatus(taskId, AgentTaskStatus.STOPPED, "Остановлено: агент не продвигается")
-        store.addEvent(taskId, AgentEventKind.WARNING, "Задача остановлена автоматически", summary)
-        store.get(taskId)?.let {
-            mirrorToChat(it, summary, "agent-stalled:${it.id}")
-            announce(it, AgentTaskStatus.STOPPED, summary)
-        }
+    /**
+     * Завершает задачу текстовым ответом модели.
+     *
+     * Та же концовка, что и у `finish_task`: результат сохранён, уведомление отправлено. Ответ
+     * уже показан в чате шагом выше, поэтому здесь он не дублируется — в переписке остаются
+     * вопрос и ответ, без служебного «задача завершена» следом.
+     */
+    private fun finishWithAnswer(
+        taskId: String,
+        text: String,
+        messages: List<ApiMessage>,
+        step: Int
+    ): AutonomousRunResult {
+        store.complete(taskId, text, encodeMessages(messages), step)
+        store.addEvent(taskId, AgentEventKind.SUCCESS, "Задача завершена ответом", text)
+        store.get(taskId)?.let { announce(it, AgentTaskStatus.COMPLETED, text) }
         return AutonomousRunResult.DONE
     }
 

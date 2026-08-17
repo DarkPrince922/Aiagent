@@ -54,16 +54,7 @@ data class ProviderSettings(
     /** Правила автономной задачи. */
     val autonomyPrompt: String = PromptDefaults.AUTONOMY,
     /** Сколько автономных задач считать одновременно. Больше — быстрее упрёшься в лимиты. */
-    val maxParallelTasks: Int = 3,
-    /**
-     * Останавливать ли автономную задачу самостоятельно, когда она перестала продвигаться.
-     *
-     * Защита от ночного холостого цикла оказалась и обрывом длинной работы на полпути. Кому
-     * важнее длинная задача, тот выключает её и останавливает работу сам.
-     */
-    val stopStalledTasks: Boolean = true,
-    /** Потолок шагов автономной задачи; действует, только пока включена остановка. */
-    val agentTaskSteps: Int = AgentLoopGuard.MAX_TOTAL_STEPS
+    val maxParallelTasks: Int = 3
 )
 
 /**
