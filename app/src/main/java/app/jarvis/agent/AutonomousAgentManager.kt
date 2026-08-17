@@ -70,7 +70,8 @@ class AutonomousAgentManager(
             require(profile.fingerprint.isNotBlank()) { "Сначала проверьте SSH-профиль и закрепите fingerprint хоста" }
         }
         val conversation = conversations.create(kind = ConversationStore.KIND_AGENT)
-        conversations.saveMessage(conversation.id, Message(role = "user", text = "[Автономная задача]\n$goal"))
+        // Цель дословно, без пометки от приложения: в переписке задачи только вопрос и ответ.
+        conversations.saveMessage(conversation.id, Message(role = "user", text = goal))
         conversations.titleFromFirstMessage(conversation.id, goal)
         val checkpoint = encodeMessages(initialMessages(goal, profile?.id, profile?.name, autoApproveSsh))
         val task = store.create(goal, conversation.id, profile?.id, autoApproveSsh && profile != null, checkpoint)
@@ -125,6 +126,8 @@ class AutonomousAgentManager(
         require(instruction.length <= 8_000) { "Указание слишком длинное; сократите до 8000 символов" }
         store.addInstruction(id, instruction)
         store.addEvent(id, AgentEventKind.SYSTEM, "Указание от пользователя", instruction.take(2_000))
+        // Вопрос виден в переписке задачи рядом с ответами, а не только в журнале.
+        mirrorToChat(task, instruction, "agent-ask:$id-${task.step}-${instruction.hashCode()}", role = "user")
         if (task.status.active) return task.status
         store.setStatus(id, AgentTaskStatus.QUEUED, "Возобновление с новым указанием")
         enqueue(id, ExistingWorkPolicy.REPLACE)
@@ -174,8 +177,7 @@ class AutonomousAgentManager(
                     }
                 } else {
                     val currentSettings = settings.get().copy(toolsEnabled = true, unlimitedAgent = true)
-                    val drained = drainInstructions(taskId, messages, step)
-                    messages = drained.messages
+                    messages = drainInstructions(taskId, messages, step)
                     val compacted = compactContext(messages, currentSettings)
                     if (compacted != messages) {
                         messages = compacted
@@ -187,26 +189,21 @@ class AutonomousAgentManager(
                     val planning = messages.none { it.role == "assistant" }
                     val schemas = if (planning) JSONArray()
                         else tools.schemas(autonomous = true, compact = currentSettings.engine == LlmEngine.LOCAL)
-                    // Уточнение приходит сообщением пользователя посреди длинной переписки, и
-                    // модель принимала его за новую вводную целиком: роль из основной инструкции
-                    // терялась. Поэтому в том же запросе инструкция повторяется всегда, а не
-                    // только когда переписка успела вырасти.
-                    val request = PromptComposer.withReminder(
-                        messages,
-                        settings.get().systemPrompt,
-                        force = planning || drained.delivered
-                    )
-                    val answer = api.complete(currentSettings, request, schemas)
+                    // Никаких повторов инструкции посреди задачи: системное сообщение с промтом,
+                    // вставленное между шагами, модель принимает за новый вопрос и отвечает на
+                    // промт вместо работы. Инструкция уходит один раз, вступлением, и вступление
+                    // защищено от обрезки в compactContext.
+                    val answer = api.complete(currentSettings, messages, schemas)
                     ensureRunning(taskId, shouldContinue)
                     step++
                     messages = messages + answer.rawMessage
                     store.updateCheckpoint(taskId, encodeMessages(messages), step, answer.text.ifBlank { "Планирую следующий шаг" })
                     if (answer.toolCalls.isEmpty()) {
                         if (answer.text.isNotBlank()) {
-                            val title = if (planning) "Ответ и план" else "Промежуточный вывод"
-                            store.addEvent(taskId, AgentEventKind.PROGRESS, title, answer.text)
-                            // Ответ до действий виден в чате, а не только в журнале задачи.
-                            if (planning) store.get(taskId)?.let { mirrorToChat(it, answer.text, "agent-plan:${it.id}") }
+                            store.addEvent(taskId, AgentEventKind.PROGRESS, "Ответ", answer.text)
+                            // Каждый ответ виден в чате задачи: переписка — это вопрос и ответ,
+                            // а не пересказ приложением того, что модель уже сказала.
+                            store.get(taskId)?.let { mirrorToChat(it, answer.text, "agent-answer:${it.id}-$step") }
                         }
                         // Текст без действий — единственный случай, который не ловила защита
                         // от повторов: вызовов нет, повторять нечего, и задача прощалась
@@ -231,6 +228,12 @@ class AutonomousAgentManager(
                         messages = messages + ApiMessage("user", prompt)
                         store.updateCheckpoint(taskId, encodeMessages(messages), step, "Продолжаю до проверенного результата")
                     } else {
+                        // Текст, сказанный перед вызовами, — такой же ответ: он тоже идёт в чат,
+                        // иначе видна только команда, а не то, что модель собиралась сделать.
+                        if (answer.text.isNotBlank()) {
+                            store.addEvent(taskId, AgentEventKind.PROGRESS, "Ответ", answer.text)
+                            store.get(taskId)?.let { mirrorToChat(it, answer.text, "agent-answer:${it.id}-$step") }
+                        }
                         if (isRepeatedCallLoop(messages)) {
                             store.addEvent(taskId, AgentEventKind.WARNING, "Повтор команды заблокирован", "Агенту предложено проверить состояние и сменить план.")
                             answer.toolCalls.forEach { call ->
@@ -289,26 +292,25 @@ class AutonomousAgentManager(
      * Вызывается только когда все tool_calls уже закрыты: вставлять сообщение пользователя
      * между вызовом инструмента и его результатом API не разрешает.
      */
-    private fun drainInstructions(taskId: String, messages: List<ApiMessage>, step: Int): Drained {
+    private fun drainInstructions(taskId: String, messages: List<ApiMessage>, step: Int): List<ApiMessage> {
         val pending = store.pendingInstructions(taskId)
-        if (pending.isEmpty()) return Drained(messages, delivered = false)
+        if (pending.isEmpty()) return messages
         val text = pending.joinToString("\n\n") { it.text }
-        val updated = messages + PromptComposer.taskInstruction(text)
+        // Текст пользователя уходит как есть. Приписка «имеет приоритет над прежними
+        // инструкциями» отменяла в глазах модели и основную инструкцию вместе с ролью.
+        val updated = messages + ApiMessage("user", text)
         store.consumeInstructions(pending.map { it.id })
         store.addEvent(taskId, AgentEventKind.SYSTEM, "Указание учтено", text.take(2_000))
         store.updateCheckpoint(taskId, encodeMessages(updated), step, "Учитываю новое указание")
-        return Drained(updated, delivered = true)
+        return updated
     }
 
-    /** Дошло ли до модели новое указание на этом шаге: от этого зависит, повторять ли инструкцию. */
-    private data class Drained(val messages: List<ApiMessage>, val delivered: Boolean)
-
     /** Пишет сообщение в чат задачи один раз: ключ detail защищает от дублей при повторах. */
-    private fun mirrorToChat(task: AgentTask, text: String, key: String) {
+    private fun mirrorToChat(task: AgentTask, text: String, key: String, role: String = "assistant") {
         val conversationId = task.conversationId ?: return
         if (text.isBlank()) return
         if (conversations.messages(conversationId).any { it.detail == key }) return
-        conversations.saveMessage(conversationId, Message(role = "assistant", text = text, detail = key))
+        conversations.saveMessage(conversationId, Message(role = role, text = text, detail = key))
     }
 
     private fun announce(task: AgentTask?, status: AgentTaskStatus, text: String) {

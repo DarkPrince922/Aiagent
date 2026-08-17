@@ -23,8 +23,7 @@ class PromptDefaultsTest {
             PromptDefaults.SYSTEM,
             PromptDefaults.ANSWER_FIRST,
             PromptDefaults.TOOLS,
-            PromptDefaults.AUTONOMY,
-            PromptDefaults.SUMMARY
+            PromptDefaults.AUTONOMY
         ).forEach { assertTrue(it.trim().length > 40) }
     }
 

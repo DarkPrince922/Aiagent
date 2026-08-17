@@ -43,8 +43,6 @@ data class ProviderSettings(
     val toolsEnabled: Boolean = true,
     /** Сначала ответить пользователю текстом, и только потом вызывать инструменты. */
     val answerBeforeTools: Boolean = true,
-    /** Отдельным сообщением подводить итог, когда в ходе ответа выполнялись действия. */
-    val summarizeAnswers: Boolean = true,
     /** В начале диалога дать модели голую инструкцию и получить подтверждение режима. */
     val primePrompt: Boolean = true,
     /** Продублировать инструкцию сообщением пользователя: для серверов, подменяющих system. */
@@ -55,8 +53,6 @@ data class ProviderSettings(
     val toolsPrompt: String = PromptDefaults.TOOLS,
     /** Правила автономной задачи. */
     val autonomyPrompt: String = PromptDefaults.AUTONOMY,
-    /** Запрос на подведение итога хода. */
-    val summaryPrompt: String = PromptDefaults.SUMMARY,
     /** Сколько автономных задач считать одновременно. Больше — быстрее упрёшься в лимиты. */
     val maxParallelTasks: Int = 3,
     /**

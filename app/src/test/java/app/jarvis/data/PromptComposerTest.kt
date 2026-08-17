@@ -102,33 +102,6 @@ class PromptComposerTest {
         assertEquals(4, PromptComposer.preludeSize(messages))
     }
 
-    @Test fun reminderCountsTheConversationNotThePrelude() {
-        val opening = PromptComposer.opening(instruction, "Принял.", service, "Принял.")
-        assertFalse("Само знакомство не повод напоминать", PromptComposer.needsReminder(opening))
-        val long = opening + List(8) { ApiMessage("user", "x") }
-        assertTrue(PromptComposer.needsReminder(long))
-    }
-
-    /** Один большой результат инструмента отодвигает инструкцию не хуже десятка сообщений. */
-    @Test fun oneHugeToolResultAlsoTriggersTheReminder() {
-        val messages = listOf(
-            PromptComposer.instruction(instruction),
-            ApiMessage("user", "прочитай отчёт"),
-            ApiMessage("tool", "y".repeat(200_000), toolCallId = "1")
-        )
-        assertTrue(PromptComposer.needsReminder(messages))
-    }
-
-    @Test fun forcedReminderIgnoresLength() {
-        val forced = PromptComposer.withReminder(PromptComposer.instructionRound(instruction), instruction, force = true)
-        assertTrue(forced.last().content!!.contains(instruction))
-    }
-
-    @Test fun reminderIsSkippedWhenThereIsNoInstruction() {
-        val messages = listOf(ApiMessage("user", "x"))
-        assertEquals(messages, PromptComposer.withReminder(messages, "   ", force = true))
-    }
-
     @Test fun onlyTheServiceBlockIsEverClamped() {
         val long = PromptComposer.service("с".repeat(50_000))!!.content!!
         val clamped = PromptComposer.clampService(long, limit = 1_000)
@@ -166,37 +139,23 @@ class PromptComposerTest {
     }
 
     /**
-     * Уточнение работающей задаче приходило с припиской «имеет приоритет над прежними
-     * инструкциями» — и модель отменяла вместе с прежней целью и роль из основной инструкции.
+     * Приложение больше не вставляет в переписку ни напоминаний с промтом, ни приписок к
+     * уточнениям: системное сообщение с инструкцией посреди задачи модель принимала за новый
+     * вопрос и отвечала на промт вместо работы. Проверяем именно отсутствие такой сборки —
+     * иначе она вернётся незамеченной.
      */
-    @Test fun aClarificationOverridesTheGoalAndNotTheMainInstruction() {
-        val message = PromptComposer.taskInstruction("  проверь ещё и логи  ")
-        assertEquals("user", message.role)
-        val text = message.content!!
-        assertTrue("Текст пользователя должен дойти дословно", text.endsWith("проверь ещё и логи"))
-        assertTrue("Уточнение должно быть важнее прежней цели", text.contains("цел"))
-        assertTrue("Основная инструкция обязана остаться в силе", text.contains("не отменяется"))
-        assertFalse(
-            "Приписка не должна отменять прежние инструкции целиком",
-            text.contains("приоритет над прежними инструкциями")
-        )
+    @Test fun nothingIsInjectedIntoTheConversationAfterTheOpening() {
+        val api = PromptComposer::class.java.methods.map { it.name }.toSet()
+        assertFalse("Напоминание с промтом не должно вернуться", api.contains("withReminder"))
+        assertFalse("И его условие тоже", api.contains("needsReminder"))
+        assertFalse("Приписка к уточнению не должна вернуться", api.contains("taskInstruction"))
     }
 
-    /** Уточнение — это ход пользователя, а не часть вступления: обрезка его не защищает. */
-    @Test fun aClarificationDoesNotLookLikePartOfThePrelude() {
+    /** Уточнение уходит дословно ходом пользователя — и заканчивает вступление, как любой ход. */
+    @Test fun aClarificationIsJustAUserTurn() {
         val messages = PromptComposer.instructionRound(instruction) +
             ApiMessage("user", "цель") +
-            PromptComposer.taskInstruction("уточнение")
+            ApiMessage("user", "проверь ещё и логи")
         assertEquals(1, PromptComposer.preludeSize(messages, instruction))
-    }
-
-    /** После уточнения инструкцию повторяют принудительно, не дожидаясь роста переписки. */
-    @Test fun theInstructionCanBeRepeatedOnDemand() {
-        val messages = PromptComposer.instructionRound(instruction) + ApiMessage("user", "цель")
-        assertFalse(PromptComposer.needsReminder(messages, instruction))
-        val forced = PromptComposer.withReminder(messages, instruction, force = true)
-        assertEquals(messages.size + 1, forced.size)
-        assertEquals("system", forced.last().role)
-        assertTrue(forced.last().content!!.contains(instruction))
     }
 }

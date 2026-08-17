@@ -161,8 +161,7 @@ class ChatViewModel(
                     conversationId = conversationId,
                     shouldContinue = flag::get,
                     onProgress = { note -> if (flag.get()) mutable.value = mutable.value.copy(statusText = note) },
-                    onInterim = { text -> if (flag.get()) addAssistantMessage(conversationId, text, null) },
-                    onSummary = { text -> if (flag.get()) addAssistantMessage(conversationId, text, SUMMARY_DETAIL) }
+                    onInterim = { text -> if (flag.get()) addAssistantMessage(conversationId, text, null) }
                 )
             }
             if (flag.get()) applyResult(conversationId, user, result)
@@ -360,7 +359,6 @@ class ChatViewModel(
     }
 
     private companion object {
-        const val SUMMARY_DETAIL = "summary"
         /** Хватает, чтобы понять структуру отчёта; полный текст берётся через read_file. */
         const val PREVIEW_CHARS = 4_000
     }

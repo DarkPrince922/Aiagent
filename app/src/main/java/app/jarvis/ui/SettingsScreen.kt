@@ -128,15 +128,6 @@ import app.jarvis.data.ProviderSettings
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
-        item {
-            ListItem(
-                headlineContent = { Text("Резюмировать ответы") },
-                supportingContent = { Text("Когда за ход выполнялись действия или ответов было несколько, агент отдельным сообщением подводит итог. Итоги автономных задач тоже дублируются в чат") },
-                leadingContent = { Icon(Icons.Default.Summarize, null) },
-                trailingContent = { Switch(value.summarizeAnswers, { value = value.copy(summarizeAnswers = it) }) },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
-        }
         if (!value.unlimitedAgent) item {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.AccountTree, null); Spacer(Modifier.width(12.dp)); Text("Максимум шагов: ${value.agentSteps}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall) }
@@ -250,11 +241,6 @@ import app.jarvis.data.ProviderSettings
             }
         }
         item {
-            PromptField("Запрос на итог", value.summaryPrompt, PromptDefaults.SUMMARY) {
-                value = value.copy(summaryPrompt = it)
-            }
-        }
-        item {
             SettingsField {
                 OutlinedButton(
                     onClick = {
@@ -262,8 +248,7 @@ import app.jarvis.data.ProviderSettings
                             systemPrompt = PromptDefaults.SYSTEM,
                             answerFirstPrompt = PromptDefaults.ANSWER_FIRST,
                             toolsPrompt = PromptDefaults.TOOLS,
-                            autonomyPrompt = PromptDefaults.AUTONOMY,
-                            summaryPrompt = PromptDefaults.SUMMARY
+                            autonomyPrompt = PromptDefaults.AUTONOMY
                         )
                     },
                     modifier = Modifier.fillMaxWidth()

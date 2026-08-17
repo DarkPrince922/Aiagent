@@ -60,8 +60,7 @@ class ChatRepository(
         shouldContinue: () -> Boolean = { true },
         allowUnlimited: Boolean = true,
         onProgress: (String) -> Unit = {},
-        onInterim: (String) -> Unit = {},
-        onSummary: (String) -> Unit = {}
+        onInterim: (String) -> Unit = {}
     ): Result<AgentReply> = runCatching {
         val saved = settingsStore.get()
         val limited = if (allowUnlimited) saved else saved.copy(unlimitedAgent = false, agentSteps = 10)
@@ -83,7 +82,7 @@ class ChatRepository(
             addAll(introduce(settings, conversationId, service, onProgress))
             history.filter { (it.role == "user" || it.role == "assistant") && it.state in setOf(DeliveryState.SENT, DeliveryState.SENDING) }.forEach { add(ApiMessage(it.role, it.text)) }
         }
-        runAgent(settings, messages, shouldContinue, onProgress, onInterim, onSummary)
+        runAgent(settings, messages, shouldContinue, onProgress, onInterim)
     }
 
     fun confirm(action: PendingAgentAction, approved: Boolean, shouldContinue: () -> Boolean = { true }): Result<AgentReply> = runCatching {
@@ -149,16 +148,13 @@ class ChatRepository(
         initial: List<ApiMessage>,
         shouldContinue: () -> Boolean,
         onProgress: (String) -> Unit = {},
-        onInterim: (String) -> Unit = {},
-        onSummary: (String) -> Unit = {}
+        onInterim: (String) -> Unit = {}
     ): AgentReply {
         var messages = initial
         var fallbackNotice: String? = null
         var step = 0
         var lastCallSignature = ""
         var repeatedCalls = 0
-        var toolsUsed = 0
-        var assistantOutputs = 0
         while (settings.unlimitedAgent || step < settings.agentSteps.coerceIn(1, 20)) {
             if (!shouldContinue()) throw CancellationException("Остановлено пользователем")
             step++
@@ -167,8 +163,11 @@ class ChatRepository(
             messages = compactContext(messages, settings)
             val schemas = if (settings.toolsEnabled) tools.schemas(compact = settings.engine == LlmEngine.LOCAL) else org.json.JSONArray()
             fun ask(extra: String? = null): ApiAnswer {
-                val request = PromptComposer.withReminder(messages, settings.systemPrompt)
-                    .let { if (extra == null) it else it + ApiMessage("system", extra) }
+                // Инструкция уходит один раз, вступлением. Повторять её посреди переписки
+                // нельзя: модель принимает такое сообщение за новый вопрос и отвечает на промт
+                // вместо того, чтобы продолжать начатое. От обрезки инструкцию защищает
+                // compactContext, а не повторы.
+                val request = if (extra == null) messages else messages + ApiMessage("system", extra)
                 return try {
                     api.complete(settings, request, schemas)
                 } catch (error: ChatFailure.Http) {
@@ -189,25 +188,21 @@ class ChatRepository(
                 answer = ask(ANSWER_FIRST_NUDGE)
             }
             messages = messages + answer.rawMessage
-            if (answer.text.isNotBlank()) assistantOutputs++
             if (answer.toolCalls.isEmpty()) {
-                val finalText = answer.text.ifBlank { "ИИ вернул пустой ответ" }
-                summarize(settings, messages, toolsUsed, assistantOutputs, onProgress, onSummary)
-                return AgentReply(finalText, notice = fallbackNotice)
+                return AgentReply(answer.text.ifBlank { "ИИ вернул пустой ответ" }, notice = fallbackNotice)
             }
             val signature = answer.toolCalls.joinToString("|") { "${it.name}:${it.arguments}" }
             repeatedCalls = if (signature == lastCallSignature) repeatedCalls + 1 else 0
             lastCallSignature = signature
             if (repeatedCalls >= 3) {
                 answer.toolCalls.forEach { call -> messages = messages + ApiMessage("tool", "REPEATED_CALL: вызов остановлен как повторяющийся", toolCallId = call.id) }
-                return synthesize(settings, messages, fallbackNotice, "Модель повторяла один и тот же инструмент")
+                return lastWord(messages, fallbackNotice, "Модель повторяла один и тот же инструмент")
             }
             // Ответ модели, предшествующий вызовам, показываем сразу: пользователь видит,
             // что понято и что сейчас будет сделано, ещё до выполнения команд.
             if (answer.text.isNotBlank()) onInterim(answer.text)
             answer.toolCalls.forEachIndexed { index, call ->
                 onProgress("Инструмент: ${call.name}")
-                toolsUsed++
                 val result = tools.execute(call.name, call.arguments)
                 if (result.needsConfirmation) {
                     return AgentReply("Нужно ваше подтверждение", PendingAgentAction(result.prompt, messages, answer.toolCalls.drop(index), settings), fallbackNotice)
@@ -215,17 +210,21 @@ class ChatRepository(
                 messages = messages + ApiMessage("tool", result.content, toolCallId = call.id)
             }
         }
-        onProgress("Формирую итоговый ответ")
-        return synthesize(settings, messages, fallbackNotice, "Достигнут настроенный лимит шагов")
+        return lastWord(messages, fallbackNotice, "Достигнут настроенный лимит шагов")
     }
 
-    private fun synthesize(settings: ProviderSettings, messages: List<ApiMessage>, notice: String?, reason: String): AgentReply = runCatching {
-        // Итоговый текст пользователь и читает, поэтому инструкция повторяется здесь всегда.
-        val finalMessages = PromptComposer.withReminder(compactContext(messages, settings), settings.systemPrompt, force = true) +
-            ApiMessage("user", "Сформируй лучший итоговый ответ по уже полученным результатам. Не вызывай инструменты. Честно укажи, что осталось незавершённым. Причина завершения: $reason")
-        val answer = api.complete(settings.copy(toolsEnabled = false), finalMessages, org.json.JSONArray())
-        AgentReply(answer.text.ifBlank { reason }, notice = notice)
-    }.getOrElse { AgentReply("$reason. Не удалось сформировать итог: ${it.message}", notice = notice) }
+    /**
+     * Ответ, когда ход закончился не сам собой.
+     *
+     * Раньше здесь шёл ещё один запрос — «сформируй итоговый ответ». Лишний ход модели поверх
+     * готовых результатов: она пересказывала сама себя, путалась в собственных пересказах и
+     * иногда отвечала на промт вместо задачи. Отдаём последнее, что она действительно сказала,
+     * и причину остановки.
+     */
+    private fun lastWord(messages: List<ApiMessage>, notice: String?, reason: String): AgentReply {
+        val said = messages.lastOrNull { it.role == "assistant" && !it.content.isNullOrBlank() }?.content?.trim()
+        return AgentReply(if (said.isNullOrBlank()) reason else "$said\n\n($reason)", notice = notice)
+    }
 
     /**
      * @param settings нужен из-за движка: у облака контекст на порядок больше телефонного.
@@ -256,36 +255,6 @@ class ChatRepository(
         val prelude = messages.take(PromptComposer.preludeSize(messages, settings.systemPrompt))
         val tail = messages.drop(prelude.size).takeLast(34).dropWhile { it.role == "tool" }
         return prelude + tail
-    }
-
-    /**
-     * Отдельное резюме поверх ответа.
-     *
-     * Нужно там, где ответов за ход было несколько или выполнялись действия: итог
-     * собирает их в одно сообщение, которое дублируется в чат и не теряется в переписке.
-     */
-    private fun summarize(
-        settings: ProviderSettings,
-        messages: List<ApiMessage>,
-        toolsUsed: Int,
-        assistantOutputs: Int,
-        onProgress: (String) -> Unit,
-        onSummary: (String) -> Unit
-    ) {
-        if (!settings.summarizeAnswers) return
-        // Для короткой реплики без действий отдельный итог только дублировал бы ответ.
-        if (toolsUsed == 0 && assistantOutputs < 2) return
-        onProgress("Готовлю итог")
-        runCatching {
-            val request = PromptComposer.withReminder(compactContext(messages, settings), settings.systemPrompt, force = true) +
-                ApiMessage("user", PromptDefaults.orDefault(settings.summaryPrompt, PromptDefaults.SUMMARY))
-            api.complete(settings.copy(toolsEnabled = false), request, org.json.JSONArray()).text
-        }.onSuccess { text ->
-            if (text.isNotBlank()) onSummary(text.trim())
-        }.onFailure {
-            // Итог — надстройка: его потеря не должна ронять уже полученный ответ.
-            onSummary("Итог сформировать не удалось: ${it.message ?: "ошибка запроса"}")
-        }
     }
 
     /**
