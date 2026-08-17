@@ -85,6 +85,14 @@ import java.util.Locale
                                 Spacer(Modifier.width(3.dp))
                                 Text("инструменты выкл", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary, maxLines = 1)
                             }
+                            // Режим виден словом, а не только цветом иконки: спутать «включено»
+                            // и «выключено» здесь стоит вопроса на каждое действие.
+                            if (state.autoApprove) {
+                                Spacer(Modifier.width(8.dp))
+                                Icon(Icons.Default.Bolt, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(3.dp))
+                                Text("авто", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                            }
                         }
                     }
                     // Авто-режим переключается там же, где работают: возвращаться в настройки

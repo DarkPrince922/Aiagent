@@ -94,8 +94,15 @@ class ChatViewModel(
      * Настройки читаются и пишутся через Keystore, поэтому не на главном потоке; состояние в
      * шапке обновляется сразу, чтобы кнопка отвечала на нажатие мгновенно.
      */
-    fun toggleAutoApprove() {
-        val next = !mutable.value.autoApprove
+    fun toggleAutoApprove() = setAutoApprove(!mutable.value.autoApprove)
+
+    /**
+     * Пишет только этот флаг, не трогая остальную форму настроек.
+     *
+     * Настройки сохраняются кнопкой, и тумблер, переключённый без нажатия, не действовал —
+     * человек видел включённый режим и по-прежнему получал вопрос на каждое действие.
+     */
+    fun setAutoApprove(next: Boolean) {
         mutable.value = mutable.value.copy(
             autoApprove = next,
             banner = if (next) "Авто-режим: действия выполняются без подтверждения" else "Авто-режим выключен: опасные действия снова спрашивают"

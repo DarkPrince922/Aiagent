@@ -114,13 +114,17 @@ import app.jarvis.data.ProviderSettings
                 headlineContent = { Text("Авто-режим в чате") },
                 supportingContent = {
                     Text(
-                        "Выполнять действия без вопроса «разрешить?»: SSH-команды, запись файлов на сервер, " +
-                            "заметки, буфер обмена. В автономной задаче так и было всегда. Переключается ещё и " +
-                            "молнией в шапке чата"
+                        "Включён по умолчанию: действия выполняются без вопроса «разрешить?» — SSH-команды, " +
+                            "запись файлов на сервер, заметки, буфер обмена. В автономной задаче так и было " +
+                            "всегда. Действует сразу и переключается ещё и молнией в шапке чата"
                     )
                 },
                 leadingContent = { Icon(Icons.Default.Bolt, null) },
-                trailingContent = { Switch(value.autoApprove, { value = value.copy(autoApprove = it) }) },
+                // Этот тумблер действует сразу, не дожидаясь кнопки «Сохранить»: иначе режим
+                // выглядит включённым, а подтверждения продолжают спрашиваться.
+                trailingContent = {
+                    Switch(value.autoApprove, { on -> value = value.copy(autoApprove = on); vm.setAutoApprove(on) })
+                },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
