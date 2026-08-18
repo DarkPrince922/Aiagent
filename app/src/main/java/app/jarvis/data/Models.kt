@@ -28,7 +28,8 @@ enum class LlmEngine { CLOUD, LOCAL }
 
 data class ProviderSettings(
     val endpoint: String = "https://aiprovider.duckdns.org/v1",
-    val model: String = "claude-opus-4-8",
+    /** Значение по умолчанию; точное имя всё равно берётся из каталога провайдера. */
+    val model: String = "grok-4.20",
     val apiKey: String = "",
     val engine: LlmEngine = LlmEngine.CLOUD,
     /** Путь к GGUF-файлу, например /sdcard/Download/Qwen3-4B-Q4_K_M.gguf */

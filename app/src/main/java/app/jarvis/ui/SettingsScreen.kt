@@ -28,8 +28,12 @@ import app.jarvis.data.ProviderSettings
     val state by vm.state.collectAsStateWithLifecycle()
     // Имена моделей у каждого провайдера свои, и захардкоженный список у чужого провайдера
     // просто врёт. Берём каталог, который вернул сам сервер при проверке подключения.
-    val knownModels = listOf("claude-opus-4-8", "claude-sonnet-4-5", "gpt-5.2", "gpt-4.1")
-    val cloudModels = state.availableModels.ifEmpty { knownModels }
+    val knownModels = listOf("grok-4.20", "grok-4.20-multi-agent", "deepseek-chat", "claude-opus-4-8", "gpt-5.2")
+    // Каталог у провайдера бывает на сотни моделей: без фильтра нужную ищут прокруткой ленты.
+    var modelFilter by remember { mutableStateOf("") }
+    val catalog = state.availableModels.ifEmpty { knownModels }
+    val cloudModels = if (modelFilter.isBlank()) catalog
+        else catalog.filter { it.contains(modelFilter.trim(), ignoreCase = true) }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Surface(color = MaterialTheme.colorScheme.surface) {
@@ -78,11 +82,31 @@ import app.jarvis.data.ProviderSettings
         item { SectionTitle("AI-провайдер", Icons.Default.Cloud) }
         item { SettingsField { OutlinedTextField(value.endpoint, { value = value.copy(endpoint = it) }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, leadingIcon = { Icon(Icons.Default.Link, null) }, supportingText = { Text("OpenAI-совместимый адрес на /v1. Свой сервер в локальной сети можно указывать по http://") }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
         item { SettingsField { OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(), label = { Text("Модель") }, leadingIcon = { Icon(Icons.Default.Memory, null) }, textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace), singleLine = true) } }
+        if (state.availableModels.size > 8) item {
+            SettingsField {
+                OutlinedTextField(
+                    modelFilter,
+                    { modelFilter = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Поиск по каталогу") },
+                    placeholder = { Text("grok") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (modelFilter.isNotBlank()) IconButton(onClick = { modelFilter = "" }) { Icon(Icons.Default.Close, "Очистить") }
+                    },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    singleLine = true
+                )
+            }
+        }
         item { LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(cloudModels) { model -> SuggestionChip(onClick = { value = value.copy(model = model) }, label = { Text(model) }, icon = if (value.model == model) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null) } } }
         item {
             Text(
-                if (state.availableModels.isEmpty()) "Нажмите «Проверить» — список моделей подставится из каталога вашего провайдера"
-                else "Каталог провайдера: ${state.availableModels.size} моделей",
+                when {
+                    state.availableModels.isEmpty() -> "Нажмите «Проверить» — список моделей подставится из каталога вашего провайдера"
+                    modelFilter.isNotBlank() -> "Найдено ${cloudModels.size} из ${state.availableModels.size}"
+                    else -> "Каталог провайдера: ${state.availableModels.size} моделей"
+                },
                 Modifier.padding(horizontal = 16.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

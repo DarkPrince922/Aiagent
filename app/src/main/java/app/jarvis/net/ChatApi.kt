@@ -38,6 +38,54 @@ data class ApiMessage(
 
 data class ApiAnswer(val text: String, val toolCalls: List<ApiToolCall>, val rawMessage: ApiMessage)
 
+/**
+ * Разбор ответа chat/completions — отдельно от сети, чтобы его можно было проверить.
+ *
+ * Формат один на всех, но заполняют его по-разному: у reasoning-моделей (Grok 4.20, DeepSeek R1)
+ * рассуждение лежит в `reasoning_content`, а `content` бывает пустым; аргументы вызова приходят
+ * то строкой, то объектом; текст — то строкой, то массивом частей. Каждое из этих отличий
+ * когда-то превращалось в «ИИ вернул пустой ответ» или в потерянный вызов инструмента.
+ */
+object ChatCompletion {
+
+    fun answer(message: JSONObject): ApiAnswer {
+        val calls = toolCalls(message.optJSONArray("tool_calls") ?: JSONArray())
+        val content = content(message.opt("content"))
+        // Рассуждение — запасной вариант и только когда сказать больше нечего: показать пустоту
+        // хуже, чем показать ход мысли. При вызове инструмента текст не нужен вовсе.
+        val text = content.ifBlank { if (calls.isEmpty()) content(message.opt("reasoning_content")) else "" }
+        return ApiAnswer(text, calls, ApiMessage("assistant", text.ifBlank { null }, toolCalls = calls))
+    }
+
+    fun toolCalls(raw: JSONArray): List<ApiToolCall> = List(raw.length()) { index ->
+        val call = raw.getJSONObject(index)
+        val function = call.getJSONObject("function")
+        ApiToolCall(
+            // Пустой id ломает связку «вызов — результат»: у ответа обязан быть свой ключ.
+            id = call.optString("id").ifBlank { "call_$index" },
+            name = function.getString("name"),
+            arguments = arguments(function.opt("arguments"))
+        )
+    }
+
+    private fun arguments(raw: Any?): JSONObject = when (raw) {
+        is JSONObject -> raw
+        is String -> if (raw.isBlank()) JSONObject() else runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+        else -> JSONObject()
+    }
+
+    fun content(value: Any?): String = when (value) {
+        is String -> value
+        is JSONArray -> buildList {
+            repeat(value.length()) { index ->
+                val part = value.optJSONObject(index)
+                part?.optString("text")?.takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }.joinToString("\n")
+        else -> ""
+    }
+}
+
 sealed class ChatFailure(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class Transport(message: String, cause: Throwable? = null) : ChatFailure(message, cause)
     class Http(val status: Int, val serverMessage: String, val retryable: Boolean, val retryAfterMillis: Long? = null) :
@@ -58,23 +106,7 @@ class ChatApi : LanguageModel {
         val raw = request(settings, "chat/completions", "POST", body)
         try {
             val message = JSONObject(raw).getJSONArray("choices").getJSONObject(0).getJSONObject("message")
-            val text = parseContent(message.opt("content"))
-            val callsJson = message.optJSONArray("tool_calls") ?: JSONArray()
-            val calls = List(callsJson.length()) { index ->
-                val call = callsJson.getJSONObject(index)
-                val function = call.getJSONObject("function")
-                val arguments = function.opt("arguments")
-                ApiToolCall(
-                    id = call.optString("id").ifBlank { "call_$index" },
-                    name = function.getString("name"),
-                    arguments = when (arguments) {
-                        is JSONObject -> arguments
-                        is String -> if (arguments.isBlank()) JSONObject() else JSONObject(arguments)
-                        else -> JSONObject()
-                    }
-                )
-            }
-            return ApiAnswer(text, calls, ApiMessage("assistant", text.ifBlank { null }, toolCalls = calls))
+            return ChatCompletion.answer(message)
         } catch (error: JSONException) {
             throw ChatFailure.Protocol("API вернул ответ в неизвестном формате", error)
         }
@@ -169,17 +201,6 @@ class ChatApi : LanguageModel {
             Thread.currentThread().interrupt()
             throw CancellationException("Операция остановлена").apply { initCause(error) }
         }
-    }
-
-    private fun parseContent(value: Any?): String = when (value) {
-        is String -> value
-        is JSONArray -> buildList {
-            repeat(value.length()) { index ->
-                val part = value.optJSONObject(index)
-                part?.optString("text")?.takeIf { it.isNotBlank() }?.let(::add)
-            }
-        }.joinToString("\n")
-        else -> ""
     }
 
     private fun parseError(raw: String): String = runCatching {
